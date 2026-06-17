@@ -9,22 +9,23 @@
 ---
 
 ## 当前阶段
-**M1 完成** — 骨架 + config + /health + docker-compose 就位，烟雾测试通过。
+**M1.5 完成** — Agent 脊椎在进程内端到端跑通（stub LLM + 兜底 Skill），6 passed。
 
 ## 上个完成项
-- **M1 骨架**：FastAPI app factory + core(config/logging/exceptions) + db(session/redis 探针) + /health + workers/celery_app(ping) + deploy(Dockerfile/compose) + tests/test_health（2 passed）
-- 01 设计 6 项修正落地（ADR-8）：harness 统一跑 loop、两类幂等分离、tool_call_records、模型名走 .env
+- **M1.5 走通骨架**：`app/llm`(LLMClient抽象+stub) + `app/agent`(context契约/state_machine/intent_classifier/skill_router/guardrails/agent_core harness) + `app/skills/general` + tests/test_agent_skeleton（4 passed）。证明：意图规则→路由→plan→harness loop→finalize→guardrails→状态机；token 记账链路通
+- **M1 骨架**：FastAPI + core + db(探针) + /health + celery_app + deploy + tests/test_health（2 passed）
+- 01 设计 6 项修正（ADR-8）
 
 ## 当前在做
-- （M1 收尾）— 待启动 M1.5
+- （M1.5 收尾）— 待启动 M2
 
 ## 下一步
-- M1.5 走通骨架：空壳 agent_core 端到端跑通（假 intent→假 Skill→canned 回复），证明脊椎
-- 然后 M2：11 张表 models + seed_data
+- M2：11 张表 SQLAlchemy models（含 refund 双唯一约束/token 字段/消息幂等键）+ init_db + seed_data
+- 之后 M3：services + tools（按 ToolResult 契约），接入 AgentCore 的 tool_registry
 
 ## 验证说明
-- 已验证：py 编译全过；venv 跑 tests/test_health 2 passed（app 装配 + /health 结构）
-- 未验证：docker compose 实际拉起（本机未跑 docker）；DB/Redis 真实连通待 M2 起容器后验
+- 已验证：py 编译全过；venv 跑全套 6 passed（health 结构 + agent 脊椎/意图/状态机/guardrails）
+- 未验证：docker compose 实际拉起（本机未跑 docker）；真实 LLM 适配器（M4）；DB/Redis 真实连通（M2 起容器后验）
 
 ## 已定 LLM
 - provider 抽象 `LLMClient`，首个适配器 = Claude `claude-opus-4-8`（anthropic SDK），可换
