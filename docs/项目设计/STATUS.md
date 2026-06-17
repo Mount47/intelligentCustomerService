@@ -9,23 +9,24 @@
 ---
 
 ## 当前阶段
-**M1.5 完成** — Agent 脊椎在进程内端到端跑通（stub LLM + 兜底 Skill），6 passed。
+**M2 完成** — 11 张表 models + init_db + seed_data 就位，10 passed。
 
 ## 上个完成项
-- **M1.5 走通骨架**：`app/llm`(LLMClient抽象+stub) + `app/agent`(context契约/state_machine/intent_classifier/skill_router/guardrails/agent_core harness) + `app/skills/general` + tests/test_agent_skeleton（4 passed）。证明：意图规则→路由→plan→harness loop→finalize→guardrails→状态机；token 记账链路通
-- **M1 骨架**：FastAPI + core + db(探针) + /health + celery_app + deploy + tests/test_health（2 passed）
-- 01 设计 6 项修正（ADR-8）
+- **M2 数据层**：`app/db/models.py`(11 表，退款双唯一约束 uq_refund_user_idem/uq_refund_business + request_hash、消息幂等 uq_msg_user_clientid、agent_sessions token/task_status 字段全) + `init_db.py` + `scripts/seed_data.py`(10用户/50订单/14物流/7政策/4异常) + tests/test_models（4 passed）
+- **M1.5 走通骨架**：app/llm(抽象+stub) + app/agent(契约/状态机/意图/路由/guardrails/harness) + general skill（4 passed）
+- **M1 骨架**：FastAPI + core + db探针 + /health + celery + deploy（2 passed）
 
 ## 当前在做
-- （M1.5 收尾）— 待启动 M2
+- （M2 收尾）— 待启动 M3
 
 ## 下一步
-- M2：11 张表 SQLAlchemy models（含 refund 双唯一约束/token 字段/消息幂等键）+ init_db + seed_data
-- 之后 M3：services + tools（按 ToolResult 契约），接入 AgentCore 的 tool_registry
+- M3：services（order/logistics/refund/ticket/sla/knowledge）+ tools（按 ToolResult 契约、自动写 agent_tool_calls）+ 接入 AgentCore.tool_registry
+- 退款 service 落三层幂等实现（M3 起步，M5 串进 RefundSkill）
 
 ## 验证说明
-- 已验证：py 编译全过；venv 跑全套 6 passed（health 结构 + agent 脊椎/意图/状态机/guardrails）
-- 未验证：docker compose 实际拉起（本机未跑 docker）；真实 LLM 适配器（M4）；DB/Redis 真实连通（M2 起容器后验）
+- 已验证：venv 全套 **10 passed**；seed_data 指向临时 sqlite 跑通（计数正确）
+- 代码约定：SQLAlchemy `Mapped[]` 注解用 `Optional[X]` 而非 `X|None`（后者 3.9 运行时 eval 报错；目标 3.11 也兼容）
+- 未验证：docker compose 实际拉起；真实 LLM 适配器（M4）；真实 PG 连通（起容器后）
 
 ## 已定 LLM
 - provider 抽象 `LLMClient`，首个适配器 = Claude `claude-opus-4-8`（anthropic SDK），可换
@@ -43,7 +44,7 @@
 | M | 内容 | 状态 |
 |---|---|---|
 | M1 | 骨架 + docker-compose | ✅ |
-| M2 | 11 张表 + seed_data | ⬜ |
+| M2 | 11 张表 + seed_data | ✅ |
 | M3 | Service + Tool + tool_calls 日志 | ⬜ |
 | M4 | 状态机 + AgentCore（规则意图/路由） | ⬜ |
 | M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ⬜ |
