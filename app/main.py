@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api import health
+from app.api import chat, health
 from app.core.config import get_settings
 from app.core.exceptions import SupportFlowError
 from app.core.logging import get_logger, setup_logging
@@ -18,8 +18,9 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__)
 
-    # 路由（M1 仅 health；chat/tickets/admin 在后续里程碑挂上）
+    # 路由（health + chat 异步闭环；tickets/admin 后续）
     app.include_router(health.router)
+    app.include_router(chat.router)
 
     @app.get("/", tags=["meta"])
     def root() -> dict:

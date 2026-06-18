@@ -9,9 +9,17 @@
 ---
 
 ## 当前阶段
-**M5 完成** — RefundHandling + LogisticsException 两条业务链路串通，40 passed。
+**M6 完成** — 异步 API 闭环跑通（POST 入队 / GET 轮询 + steps / worker 处理），45 passed。
 
-## 上个完成项（M5）
+## 上个完成项（M6）
+- **异步 API 闭环（§10/§14/ADR-10）**：
+  · `POST /api/chat/message`：消息幂等去重 + 落库 + 建 session(queued) + 入队，立即返回（不阻塞）
+  · `GET /api/chat/session/{id}`：task_status + latest_reply + **steps 时间线**(意图→技能→工具→结果) + token 视图
+  · `workers/runner.run_agent_session`（纯函数，不依赖 celery，可测）+ `agent_tasks` celery 包装；按 .env 选 provider
+  · `schemas/chat`、`services/chat_service`、`api/chat`（_dispatch 可 monkeypatch）；schema 用 Optional 兼容 3.9/3.11
+- tests/test_chat_api（5 passed，全套 45）：入队/幂等不重复入队/轮询/worker 真处理(退款→completed、高风险→need_human)
+
+## 更早完成项（M5）
 - **两个业务 Skill（声明式，ADR-8）**：`skills/refund_handling` + `skills/logistics_exception`（各 handler + instructions.md），注册进 SkillRouter
   · 安全设计：LLM 在 loop 中**只读**取信息，**退款写操作与决策由 finalize 确定性执行**（不可逆动作不交给 LLM）
   · 退款：低风险自动草稿 / 高风险→草稿(pending_human)+升级工单+转人工 / 缺单号索取 / 非本人转人工
@@ -31,12 +39,12 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （M5 收尾）— 待启动 M6
+- （M6 收尾）— 后端核心闭环已完整；可联调 / 进 M7
 
-## 下一步
-- M6：异步 API 闭环 —— `POST /chat/message`(消息幂等去重 + 落库 + 建 session + 入队，立即返回) + `GET /chat/session/{id}`(轮询 task_status + latest_reply + **steps 时间线** 给前端) + Celery `process_agent_message`(消费→跑 AgentCore→写回 session/消息)
-- 真实 provider 联调（需 key）：M6 后用真 .env + docker 端到端跑一次（链路已完整，此时联调最有价值）
-- 之后 M7 评测 / M8 压测+README / M9 并发幂等 / M10·M11 前端对接
+## 下一步（二选一，看你优先级）
+- **A 真实联调**：用真 .env（Claude/DeepSeek key）+ `docker compose up` 端到端跑一次（需你在终端跑 docker；我没法跑）。这是首次验证"真实模型+真实PG+异步削峰"
+- **B M7 评测**：test_cases.json(30常规+5对抗) + run_eval（intent/skill/tool/handoff/状态机准确率 + guardrails 对抗指标）
+- 之后 M8 压测+README / M9 并发幂等(postgres) / M10·M11 前端对接（steps 时间线已就绪）
 
 ## 验证说明
 - 已验证：venv 全套 **25 passed**（含退款三层幂等、工具审计落库、幂等贯通工具层）
@@ -64,7 +72,7 @@
 | M3 | Service + Tool + tool_calls 日志 | ✅ |
 | M4 | 状态机 + AgentCore + LLM适配层 + loop执行 | ✅ |
 | M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ✅ |
-| M6 | Celery + 轮询闭环 | ⬜ |
+| M6 | Celery + 轮询闭环 | ✅ |
 | M7 | 评测集（30+5）+ run_eval | ⬜ |
 | M8 | 压测 + README | ⬜ |
 | M9 | 并发幂等测试 + pytest + tracing | ⬜ |
