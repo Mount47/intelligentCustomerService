@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import time
+
 from app.llm.base import LLMResponse, Msg, ToolSpec, Usage
 
 
@@ -22,7 +24,12 @@ class StubLLMClient:
         tools: list[ToolSpec] | None = None,
         stream: bool = False,
     ) -> LLMResponse:
-        # 骨架阶段不调工具：直接 end_turn，带一份假 usage 验证记账链路
+        # 压测可配模拟处理时延（STUB_DELAY_MS），让队列削峰更直观
+        from app.core.config import get_settings
+        delay = get_settings().stub_delay_ms
+        if delay > 0:
+            time.sleep(delay / 1000)
+        # 不调工具：直接 end_turn，带一份假 usage 验证记账链路
         return LLMResponse(
             text=self._canned,
             stop_reason="end_turn",

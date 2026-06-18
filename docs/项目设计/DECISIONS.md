@@ -73,3 +73,11 @@
 - 工具调用归一化为 provider 无关的 `LLMResponse.tool_calls`；`Msg` 扩展 `tool_call_id/tool_calls` 以支持 agent loop 的工具结果回放。
 - **SDK 延迟导入**（adapter 内构造 client 时才 import），离线/未装 SDK 也能单测，且 anthropic/openai 成可选依赖。
 **为什么**：用户要求适配器兼容各种模型（Claude/GPT/DeepSeek/Qwen…）走 API；OpenAI 兼容协议是事实标准，一个适配器吃下大半生态，工程量最小、可降本切换。
+
+## ADR-12 · 2026-06-18 · 管理员端 = 运维监测端；观测接口压测/监测共用
+**决策**：管理员端定位为**运维监测端**——展示 ①Agent 处理详细过程(思考步骤) ②可观测指标(工单量/解决率/转人工率/token成本/延迟/**队列深度/状态分布**) ③**压测运行时信息(削峰可视化)**。
+- 后端观测接口**一套两用**（压测观测 + 管理端 dashboard）：`GET /api/admin/metrics`（状态分布 + Redis 队列深度 + token/延迟聚合）、`/api/admin/sessions(/{id})`、`/api/admin/tickets(/{id})`；处理过程复用已有 `GET /chat/session/{id}` 的 steps。
+- 业务逻辑（skills/tools/agent/三层幂等/状态机）**已完结**；后续新增主要是**观测接口 + 前端两端**，不再加业务。
+- 落地顺序：**M8 先建 `/api/admin/metrics`**（压测削峰要用）；其余 admin 查询接口在 M11 前端对接时补齐。
+- 压测“削峰可视化” = 运维端实时刷 `/api/admin/metrics` 的队列深度/状态分布；Locust 自身 P95/RPS 报告在其 web UI/CSV，按需嵌快照。
+**为什么**：用户明确 admin 端是运维监测端且要展示压测信息；运行时指标与压测观测本就是同一组数据，接口一套两用，省一半活。

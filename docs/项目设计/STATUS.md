@@ -9,9 +9,16 @@
 ---
 
 ## 当前阶段
-**M7 完成** — 评测集(30常规+5对抗) + run_eval，stub 全指标达标，47 passed。
+**M8 完成** — 压测脚本 + /admin/metrics + README，50 passed。
 
-## 上个完成项（M7）
+## 上个完成项（M8）
+- **观测接口**（压测/管理端共用，ADR-12）：`app/observability/metrics.compute_metrics` + `GET /api/admin/metrics`（状态分布 + Redis 队列深度 + agent 表现 + token/成本）
+- **压测**：`loadtest/locustfile.py`（压 POST /chat/message，校验入队成功，读写混合，三档）；stub 加 `STUB_DELAY_MS` 模拟时延（削峰可见）
+- **README**：项目介绍/架构/状态机/三层幂等/表/API/运行(本地+docker)/切模型/测试/评测/压测边界/亮点/后续
+- **CI 烟雾测**（不依赖 docker）：metrics 计算 + /admin/metrics 端点 + 接入路径 30 连发全入队。tests/test_admin（3 passed，全套 50）
+- `.gitignore` 补 `*.db`
+
+## 更早完成项（M7）
 - **评测（§16/§23.3）**：`app/eval/test_cases.json`(30 常规 + 5 对抗) + `metrics.py` + `run_eval.py`（默认 stub 可复现，`--real` 用 .env 真模型）
   · 流程类：intent/skill/state/handoff 准确率 + tool_call_success_rate
   · 质量类：policy_compliance / forbidden_phrase_block / high_risk_handoff / resolution_rate
@@ -48,11 +55,13 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （M7 收尾）— 进 M8 压测+README
+- （M8 收尾）— 待你本地 docker+locust 实压；进 M9 / 前端对接接口
 
-## 下一步
-- M8：Locust 压测 `POST /chat/message`(接入层削峰，P95<300ms/入队成功率>99%) + README（项目介绍/架构/状态机/Skill/工具/幂等/运行·测试·评测·压测/亮点/后续）
-- 之后 M9 并发幂等(postgres 真并发) / M10·M11 前端对接
+## 下一步（看优先级）
+- **本地实压**（你跑）：docker compose 起全栈 + locust 三档 + 看 /admin/metrics 削峰曲线，结果贴回
+- **M9** 并发幂等真测（postgres 多线程，验两个相同退款只成一条）+ tracing
+- **前端对接**（M10/11）：补 admin 查询接口（/admin/sessions、/admin/tickets）→ Vue 两端
+- 业务逻辑已完结，后续只加观测接口 + 前端
 
 ## 本地运行（无需 docker/redis/celery）
 - `AGENT_DISPATCH=thread`：POST 用后台线程跑，轮询闭环照常（本地只需 uvicorn+sqlite）
@@ -94,12 +103,14 @@
 | M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ✅ |
 | M6 | Celery + 轮询闭环 | ✅ |
 | M7 | 评测集（30+5）+ run_eval | ✅ |
-| M8 | 压测 + README | ⬜ |
+| M8 | 压测 + README + /admin/metrics | ✅ |
 | M9 | 并发幂等测试 + pytest + tracing | ⬜ |
-| M10 | 前端·用户聊天端（Vue3，思考过程时间线，轮询） | ⬜ |
-| M11 | 前端·管理员端（看板/工单/会话/审计） | ⬜ |
+| M10 | 前端·用户聊天端（Vue3，提问→答复，思考过程时间线，轮询） | ⬜ |
+| M11 | 前端·管理员端 = **运维监测端**（处理过程/指标/压测削峰可视化） | ⬜ |
 
-> 前端（ADR-10）= Vue3 + Element Plus/Naive UI，排在后端核心(M3~M6)之后；需后端补 `GET /chat/session` 的 steps/timeline + admin 端点。
+> 前端（ADR-10/12）= Vue3，已在 `frontend/`（用户脚手架）。admin 端 = 运维监测端。
+> 后端观测接口压测/监测共用：M8 建 `/api/admin/metrics`；`/api/admin/sessions`、`/api/admin/tickets` 在 M11 前补。
+> 业务逻辑已完结，后续只加观测接口 + 前端。
 
 ## 导航
 - 稳定设计：`01-总体设计.md` ✅（架构/Agent契约/LLMClient/状态机/表/幂等/guardrails）
