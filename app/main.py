@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
@@ -17,6 +18,15 @@ def create_app() -> FastAPI:
     logger = get_logger(__name__)
 
     app = FastAPI(title=settings.app_name, version=__version__)
+
+    # CORS：本地前端联调（默认全放开，可用 CORS_ORIGINS 收紧）
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()] or ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # 路由（health + chat 异步闭环 + admin 运维监测）
     app.include_router(health.router)

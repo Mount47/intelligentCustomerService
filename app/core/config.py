@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     debug: bool = True
     log_level: str = "INFO"
+    cors_origins: str = "*"   # 逗号分隔的允许来源；本地联调默认全放开
 
     # 数据库 / Redis
     database_url: str = "postgresql+psycopg://supportflow:supportflow@db:5432/supportflow"
