@@ -52,9 +52,9 @@ def test_post_message_enqueues_and_returns(client):
     r = client.post("/api/chat/message", json={"user_id": 1, "content": "你好"})
     assert r.status_code == 200
     body = r.json()
-    assert body["task_status"] == "queued" and body["dedup"] is False
-    assert body["session_id"] and body["ticket_id"]
-    assert client.dispatched == [body["session_id"]]   # 入队一次
+    assert body["taskStatus"] == "queued" and body["dedup"] is False
+    assert body["sessionId"] and body["ticketId"]
+    assert client.dispatched == [body["sessionId"]]    # 入队一次
 
 
 def test_message_idempotency_no_double_enqueue(client):
@@ -62,15 +62,15 @@ def test_message_idempotency_no_double_enqueue(client):
     r1 = client.post("/api/chat/message", json=payload).json()
     r2 = client.post("/api/chat/message", json=payload).json()
     assert r2["dedup"] is True
-    assert r1["session_id"] == r2["session_id"]
-    assert client.dispatched == [r1["session_id"]]     # 只入队一次
+    assert r1["sessionId"] == r2["sessionId"]
+    assert client.dispatched == [r1["sessionId"]]      # 只入队一次
 
 
 def test_get_session_initial_state(client):
-    sid = client.post("/api/chat/message", json={"user_id": 1, "content": "你好"}).json()["session_id"]
+    sid = client.post("/api/chat/message", json={"user_id": 1, "content": "你好"}).json()["sessionId"]
     r = client.get(f"/api/chat/session/{sid}")
     assert r.status_code == 200
-    assert r.json()["task_status"] == "queued"   # 未处理（入队被 stub）
+    assert r.json()["taskStatus"] == "queued"    # 未处理（入队被 stub）
     assert client.get("/api/chat/session/99999").status_code == 404
 
 

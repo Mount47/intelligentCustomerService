@@ -9,9 +9,16 @@
 ---
 
 ## 当前阶段
-**M8 完成** — 压测脚本 + /admin/metrics + README，50 passed。
+**前端对接接口 完成** — 后端对齐前端 camelCase 契约 + admin 查询接口，51 passed。
 
-## 上个完成项（M8）
+## 上个完成项（前端对接接口，ADR-13）
+- `CamelModel`(camelCase 序列化) + 重写 schemas(chat/admin/common)对齐 `frontend/src/api/types.ts`
+- 会话视图升级为完整 `ChatSession`(messages + steps + toolCalls + tokenUsage)；task_status 内部→前端枚举映射
+- 新增 admin 查询接口：`/api/admin/{metrics,tickets,tickets/{id},sessions,sessions/{id}}`(metrics 对齐 AdminMetrics + 削峰超集)
+- 同步改 chat 接口响应为 camelCase；demo_local/run_eval/测试适配新形状
+- tests/test_admin +1(tickets/sessions)，全套 51；前端设 `VITE_USE_MOCK=false` 即可连
+
+## 更早完成项（M8）
 - **观测接口**（压测/管理端共用，ADR-12）：`app/observability/metrics.compute_metrics` + `GET /api/admin/metrics`（状态分布 + Redis 队列深度 + agent 表现 + token/成本）
 - **压测**：`loadtest/locustfile.py`（压 POST /chat/message，校验入队成功，读写混合，三档）；stub 加 `STUB_DELAY_MS` 模拟时延（削峰可见）
 - **README**：项目介绍/架构/状态机/三层幂等/表/API/运行(本地+docker)/切模型/测试/评测/压测边界/亮点/后续
@@ -55,13 +62,13 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （M8 收尾）— 待你本地 docker+locust 实压；进 M9 / 前端对接接口
+- （前端对接接口 收尾）— 后端接口已就绪，可联调 Vue 前端
 
 ## 下一步（看优先级）
-- **本地实压**（你跑）：docker compose 起全栈 + locust 三档 + 看 /admin/metrics 削峰曲线，结果贴回
-- **M9** 并发幂等真测（postgres 多线程，验两个相同退款只成一条）+ tracing
-- **前端对接**（M10/11）：补 admin 查询接口（/admin/sessions、/admin/tickets）→ Vue 两端
-- 业务逻辑已完结，后续只加观测接口 + 前端
+- **前端联调**（你跑）：`frontend/` 设 `VITE_API_BASE_URL=http://localhost:8000/api`、`VITE_USE_MOCK=false`，起后端(uvicorn thread 模式) + `npm run dev`，看用户端提问/思考过程、运维端指标/工单/会话
+- **本地实压**（你跑）：docker compose + locust + 看 /admin/metrics 削峰
+- **M9** 并发幂等真测（postgres 多线程）+ tracing
+- 前端两端的 Vue 视图增强（ChatView/AdminView）按需我可协助
 
 ## 本地运行（无需 docker/redis/celery）
 - `AGENT_DISPATCH=thread`：POST 用后台线程跑，轮询闭环照常（本地只需 uvicorn+sqlite）

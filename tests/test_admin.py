@@ -66,20 +66,37 @@ def client(monkeypatch):
 
 def test_admin_metrics_endpoint(client):
     for _ in range(3):
-        client.post("/api/chat/message", json={"user_id": 1, "content": "你好"})
+        client.post("/api/chat/message", json={"userId": 1, "content": "你好"})
     r = client.get("/api/admin/metrics")
     assert r.status_code == 200
     body = r.json()
-    assert {"sessions_by_task_status", "queue_depth", "totals", "agent", "cost"} <= set(body)
-    assert body["totals"]["sessions"] >= 3
-    assert body["sessions_by_task_status"].get("queued", 0) >= 3   # 入队被 stub，停在 queued
+    # 前端 AdminMetrics 契约（camelCase）+ 削峰超集
+    assert {"ticketCount", "resolvedRate", "handoffRate", "activeSessions",
+            "queueDepth", "sessionsByTaskStatus"} <= set(body)
+    assert body["activeSessions"] >= 3
+    assert body["sessionsByTaskStatus"].get("queued", 0) >= 3   # 入队被 stub，停在 queued
 
 
 def test_ingest_path_many(client):
     n = 30
     for i in range(n):
         r = client.post("/api/chat/message",
-                        json={"user_id": 1, "content": "我要退款", "client_message_id": f"m-{i}"})
-        assert r.status_code == 200 and r.json()["task_status"] == "queued"
+                        json={"userId": 1, "content": "我要退款", "clientMessageId": f"m-{i}"})
+        assert r.status_code == 200 and r.json()["taskStatus"] == "queued"
     assert len(client.dispatched) == n                              # 全部入队
-    assert client.get("/api/admin/metrics").json()["totals"]["sessions"] == n
+    assert client.get("/api/admin/metrics").json()["sessionsByTaskStatus"].get("queued", 0) == n
+
+
+def test_admin_tickets_and_sessions(client):
+    for _ in range(2):
+        client.post("/api/chat/message", json={"userId": 1, "content": "我要退款"})
+    tickets = client.get("/api/admin/tickets").json()
+    sessions = client.get("/api/admin/sessions").json()
+    assert len(tickets) >= 2 and len(sessions) >= 2
+    assert {"id", "category", "status", "currentState"} <= set(tickets[0])
+    assert {"id", "taskStatus", "totalTokens"} <= set(sessions[0])
+    # 工单详情
+    tid = tickets[0]["id"]
+    detail = client.get(f"/api/admin/tickets/{tid}").json()
+    assert "messages" in detail and "stateTimeline" in detail
+    assert client.get("/api/admin/tickets/999999").status_code == 404

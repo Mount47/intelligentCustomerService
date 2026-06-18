@@ -81,3 +81,11 @@
 - 落地顺序：**M8 先建 `/api/admin/metrics`**（压测削峰要用）；其余 admin 查询接口在 M11 前端对接时补齐。
 - 压测“削峰可视化” = 运维端实时刷 `/api/admin/metrics` 的队列深度/状态分布；Locust 自身 P95/RPS 报告在其 web UI/CSV，按需嵌快照。
 **为什么**：用户明确 admin 端是运维监测端且要展示压测信息；运行时指标与压测观测本就是同一组数据，接口一套两用，省一半活。
+
+## ADR-13 · 2026-06-18 · 后端对齐前端契约（camelCase），零前端改动
+**决策**：前端 `frontend/src/api/types.ts` 已定义完整契约（camelCase + ChatSession/AdminMetrics/TicketSummary/SessionSummary/TicketDetail/SessionDetail 形状），**后端对齐它**，前端不改即可连（`VITE_USE_MOCK=false`）。
+- Pydantic `CamelModel`（`alias_generator=to_camel` + `populate_by_name`）：响应 camelCase 输出，请求兼收 camel/snake。
+- `task_status` 内部值 → 前端枚举映射：`completed`/`waiting_user_input` → `final`；`timeout` → `failed`；其余同名。内部态仍保留在 `finalStatus`/`currentState` 供细分。
+- 会话视图升级为完整 `ChatSession`（messages + steps 时间线 + toolCalls + tokenUsage）。
+- 新增 admin 查询接口：`/api/admin/{metrics,tickets,tickets/{id},sessions,sessions/{id}}`；metrics 对齐 `AdminMetrics` 并附削峰超集字段。
+**为什么**：前端是消费方且已成型，camelCase 是 JS 惯例；后端服务于前端契约、零前端改动最省事。受影响的后端测试同步改 camelCase 键。

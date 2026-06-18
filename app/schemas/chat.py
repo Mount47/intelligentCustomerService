@@ -1,58 +1,76 @@
-"""Chat 接口 schema（§14）。所有 API 用 Pydantic。
+"""Chat 接口 schema（前端契约对齐，camelCase）。见 frontend/src/api/types.ts。"""
+from __future__ import annotations
 
-注：字段用 typing.Optional（Pydantic v2 在 3.9 会运行时求值，PEP604 `X|None` 报错；
-Optional 兼容 3.9/3.11）。
-"""
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from app.schemas.common import CamelModel
 
 
-class ChatMessageIn(BaseModel):
-    user_id: int
+class ChatMessageIn(CamelModel):
+    user_id: int                      # 接受 userId / user_id
     content: str
+    client_message_id: Optional[str] = None
     ticket_id: Optional[int] = None
     order_id: Optional[int] = None
-    client_message_id: Optional[str] = None   # 消息幂等键（§9.1）
 
 
-class ChatMessageAccepted(BaseModel):
-    session_id: int
-    ticket_id: int
-    task_status: str
-    dedup: bool = False                        # True=命中消息幂等，未重复入队
-
-
-class Step(BaseModel):
-    """思考过程时间线的一格（给前端，ADR-10）。"""
-    kind: str            # intent | skill | tool | state
-    label: str
-    detail: Optional[str] = None
-    ok: Optional[bool] = None
-
-
-class TokenView(BaseModel):
-    model: Optional[str] = None
-    prompt: int = 0
-    completion: int = 0
-    total: int = 0
-    cost: float = 0.0
-
-
-class SessionView(BaseModel):
+class SendMessageResponse(CamelModel):
     session_id: int
     ticket_id: Optional[int]
     task_status: str
-    current_intent: Optional[str]
-    current_skill: Optional[str]
-    current_state: Optional[str]
-    latest_reply: Optional[str]
-    final_status: Optional[str]
-    error_message: Optional[str]
-    retry_count: int
-    steps: List[Step]
-    tokens: TokenView
-    created_at: Optional[datetime]
-    started_at: Optional[datetime]
-    finished_at: Optional[datetime]
+    dedup: bool = False
+
+
+class AgentTimelineStep(CamelModel):
+    id: str
+    kind: str                         # intent | skill | tool | risk | reply | state
+    title: str
+    detail: Optional[str] = None
+    status: str = "success"           # pending | running | success | failed
+    latency_ms: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+class ToolCallView(CamelModel):
+    id: int
+    session_id: int
+    tool_name: str
+    input_json: Optional[dict] = None
+    output_json: Optional[dict] = None
+    success: bool
+    latency_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class ChatMessageView(CamelModel):
+    id: int
+    sender: str                       # user | agent | human | system
+    content: str
+    created_at: Optional[datetime] = None
+
+
+class TokenUsage(CamelModel):
+    model_name: Optional[str] = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost: float = 0.0
+    cache_hit: bool = False
+
+
+class ChatSession(CamelModel):
+    id: int
+    ticket_id: Optional[int] = None
+    task_status: str
+    current_intent: Optional[str] = None
+    current_skill: Optional[str] = None
+    current_state: Optional[str] = None
+    final_status: Optional[str] = None
+    latest_reply: Optional[str] = None
+    messages: List[ChatMessageView] = []
+    steps: List[AgentTimelineStep] = []
+    tool_calls: List[ToolCallView] = []
+    token_usage: TokenUsage = TokenUsage()
+    total_latency_ms: Optional[int] = None

@@ -66,9 +66,9 @@ def _run_one(db, agent, user_id: int, content: str, order_id: int | None) -> Non
     print(f"意图={view.current_intent}  技能={view.current_skill}  "
           f"状态={view.final_status}  task={view.task_status}")
     print("思考过程：", " → ".join(
-        f"{s.label}" + (f"({s.detail})" if s.detail else "") for s in view.steps))
+        f"{s.title}" + (f"({s.detail})" if s.detail else "") for s in view.steps))
     print(f"回复：{view.latest_reply}")
-    print(f"token：{view.tokens.model} total={view.tokens.total}")
+    print(f"token：{view.token_usage.model_name} total={view.token_usage.total_tokens}")
 
 
 def main() -> None:
