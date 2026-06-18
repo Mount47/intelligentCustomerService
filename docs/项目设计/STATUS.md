@@ -9,7 +9,15 @@
 ---
 
 ## 当前阶段
-**前端视图增强 完成** — 翡翠运维控制台主题（Fraunces+Manrope+JetBrains Mono），vue-tsc 通过。
+**M9 完成** — 退款并发幂等硬验 + tracing，54 passed（并发测试 5/5 稳定）。
+
+## 上个完成项（M9）
+- **并发幂等硬验**：`tests/test_concurrency.py` 8 线程 barrier 同发同一退款 → 断言只成一条 + 全拿同一 id + 仅一个 created（其余走 IntegrityError 回查/dedup）。默认文件 sqlite 验逻辑，`TEST_DATABASE_URL=postgres` 跑真并发
+- **tracing**：`observability/tracing.py`(trace_id contextvar + TraceFilter)；日志格式加 `[trace_id]`；runner 每会话 `new_trace_id()` 串全链路
+- tests/test_tracing(2) + test_concurrency(1)，全套 54
+- 期间还补：CORS 中间件、seed 场景数据集+对照表、前端翡翠主题、前端对接 camelCase 接口
+
+## 更早完成项（前端视图增强）
 
 ## 上个完成项（前端视图增强）
 - 重写 `frontend/src/styles/base.css` 设计系统：翡翠绿+暖米纸面、衬线标题+等宽数字、渐变网格背景+微噪点、卡片错峰入场、思考时间线逐格点亮+处理脉冲；Element Plus 主题对齐
@@ -118,7 +126,7 @@
 | M6 | Celery + 轮询闭环 | ✅ |
 | M7 | 评测集（30+5）+ run_eval | ✅ |
 | M8 | 压测 + README + /admin/metrics | ✅ |
-| M9 | 并发幂等测试 + pytest + tracing | ⬜ |
+| M9 | 并发幂等测试 + pytest + tracing | ✅ |
 | M10 | 前端·用户聊天端（Vue3，提问→答复，思考过程时间线，轮询） | ⬜ |
 | M11 | 前端·管理员端 = **运维监测端**（处理过程/指标/压测削峰可视化） | ⬜ |
 

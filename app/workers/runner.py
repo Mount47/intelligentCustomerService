@@ -34,6 +34,9 @@ def run_agent_session(db: Session, session_id: int, agent=None) -> None:
         logger.warning("run_agent_session: session %s not found", session_id)
         return
 
+    from app.observability.tracing import new_trace_id
+    new_trace_id()   # 本次会话全链路 trace_id
+
     sess.task_status = "processing"
     sess.started_at = datetime.utcnow()
     db.commit()

@@ -11,13 +11,16 @@ def setup_logging(level: str = "INFO") -> None:
     global _CONFIGURED
     if _CONFIGURED:
         return
+    from app.observability.tracing import TraceFilter
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            "%(asctime)s %(levelname)s [%(name)s] [%(trace_id)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
+    handler.addFilter(TraceFilter())   # 注入 trace_id
     root = logging.getLogger()
     root.setLevel(level.upper())
     root.handlers.clear()
