@@ -71,7 +71,10 @@ class AgentCore:
         return decision
 
     def _run_loop(self, ctx: AgentContext, plan) -> None:
-        specs: list[ToolSpec] | None = None  # M3：据 plan.allowed_tools 从 registry 构造
+        # 据 plan.allowed_tools 从 registry 构造工具规格（白名单约束 LLM 可调工具）
+        specs: list[ToolSpec] | None = None
+        if plan.allowed_tools and self.tools is not None:
+            specs = self.tools.specs(plan.allowed_tools)
         messages = list(ctx.history) + [Msg(role="user", content=ctx.message)]
         for _ in range(max(1, plan.max_iterations)):
             resp = self.llm.chat(system=plan.system_prompt, messages=messages, tools=specs)
@@ -88,12 +91,19 @@ class AgentCore:
             break
 
 
-def build_default_agent(llm: LLMClient | None = None) -> AgentCore:
-    """默认装配（骨架/测试用 stub LLM）。M4/M5 换成 registry 选真实 provider。"""
+def build_default_agent(llm: LLMClient | None = None, tool_registry=None) -> AgentCore:
+    """默认装配。骨架/测试用 stub LLM；M4/M5 换 registry 选真实 provider。
+
+    tool_registry 默认装载全部业务工具（M3）；harness 据 SkillPlan.allowed_tools 取规格。
+    """
+    if tool_registry is None:
+        from app.tools.registry import build_tool_registry
+        tool_registry = build_tool_registry()
     return AgentCore(
         llm=llm or StubLLMClient(),
         classifier=RuleIntentClassifier(),
         router=SkillRouter(),
         state_machine=StateMachine(),
         guardrails=Guardrails(),
+        tool_registry=tool_registry,
     )

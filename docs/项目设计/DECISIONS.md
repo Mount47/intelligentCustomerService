@@ -55,3 +55,11 @@
 **决策**：每个 milestone（M1、M2…）**完成并且测试通过**后，立即 git commit；提交信息写清该阶段交付了什么。直接提到默认分支 `main`，保持线性的里程碑历史（solo 学习项目，暂不用 feature 分支/远程）。
 **为什么**：用户要求。让"项目状态活在 repo（git log）里"——git log 是客观进度真值（呼应 ADR-6 文档分层：代码+测试 > git log > 文档）。每阶段一提交便于回溯、对照 STATUS、面试时讲演进。
 **怎么做**：milestone 收尾 = 跑测试通过 → 更新 STATUS → `git commit`（三件套绑定）。提交信息结尾带 `Co-Authored-By: Claude Opus 4.8`。测试没过不提交。
+
+## ADR-10 · 2026-06-18 · 加前端两端（推翻 ADR-1 "v1 不做前端"）
+**决策**：做用户聊天端 + 管理员端两个前端，**Vue 3 + Element Plus / Naive UI**。
+- **用户端 `/chat`**：输入问题→消息气泡→回复；**"思考过程"= Agent 步骤时间线**（识别意图→路由技能→工具调用→风险判断→生成回复），数据来自 `GET /chat/session` 的 `current_intent/skill/state` + `agent_tool_calls`，真实可追溯、零额外成本（LLM 思考摘要作为可选高级视图，后续）；轮询对齐后端（ADR-5），SSE 后续。
+- **管理员端 `/admin`**：概览看板（工单量/解决率/转人工率/平均 token 成本/P95 延迟）、工单列表+详情（状态机时间线/消息）、会话详情（token/cost + agent_tool_calls 审计）；质检页留空（QualityReviewSkill 后续）。
+- **时机**：后端核心 M3~M6 跑通（有真实 /chat/message、/chat/session、admin metrics）后再做前端里程碑，避免对着 mock 返工。
+**影响后端**：`GET /chat/session` 响应需带 `steps/timeline`（意图/技能/工具调用进展）供前端点亮；需补 admin 端点（metrics/tickets/sessions/tool_calls）。
+**为什么**：用户要求页面精美 + 可输入得回复 + 看简单思考过程 + 管理员端；前端正好把异步状态/Agent 决策轨迹/成本可视化，是展示亮点。
