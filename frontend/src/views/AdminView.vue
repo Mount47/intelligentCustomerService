@@ -30,13 +30,15 @@ function drawChart() {
   if (!chartEl.value || !metrics.value) return;
   chart = chart ?? echarts.init(chartEl.value);
   chart.setOption({
-    grid: { left: 32, right: 18, top: 24, bottom: 28 },
+    textStyle: { fontFamily: "JetBrains Mono, monospace" },
+    grid: { left: 36, right: 18, top: 30, bottom: 28 },
+    legend: { right: 0, top: 0, icon: "roundRect", textStyle: { color: "#5e6f69" } },
     tooltip: { trigger: "axis" },
-    xAxis: { type: "category", data: ["09:00", "11:00", "13:00", "15:00", "17:00"], axisTick: { show: false } },
-    yAxis: { type: "value", splitLine: { lineStyle: { color: "#e7edf3" } } },
+    xAxis: { type: "category", boundaryGap: false, data: ["09:00", "11:00", "13:00", "15:00", "17:00"], axisTick: { show: false }, axisLine: { lineStyle: { color: "#e0e2d6" } } },
+    yAxis: { type: "value", splitLine: { lineStyle: { color: "#e0e2d6", type: "dashed" } } },
     series: [
-      { name: "自动解决", type: "line", smooth: true, data: [18, 26, 34, 39, 46], color: "#1f8a70", areaStyle: { color: "rgba(31, 138, 112, 0.12)" } },
-      { name: "转人工", type: "line", smooth: true, data: [4, 6, 5, 8, 7], color: "#d97706" }
+      { name: "自动解决", type: "line", smooth: true, symbol: "circle", symbolSize: 7, lineStyle: { width: 3 }, data: [18, 26, 34, 39, 46], color: "#0f8a68", areaStyle: { color: "rgba(15, 138, 104, 0.14)" } },
+      { name: "转人工", type: "line", smooth: true, symbol: "circle", symbolSize: 7, lineStyle: { width: 3 }, data: [4, 6, 5, 8, 7], color: "#c2592b", areaStyle: { color: "rgba(194, 89, 43, 0.10)" } }
     ]
   });
 }

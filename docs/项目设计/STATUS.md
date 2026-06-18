@@ -9,7 +9,14 @@
 ---
 
 ## 当前阶段
-**前端对接接口 完成** — 后端对齐前端 camelCase 契约 + admin 查询接口，51 passed。
+**前端视图增强 完成** — 翡翠运维控制台主题（Fraunces+Manrope+JetBrains Mono），vue-tsc 通过。
+
+## 上个完成项（前端视图增强）
+- 重写 `frontend/src/styles/base.css` 设计系统：翡翠绿+暖米纸面、衬线标题+等宽数字、渐变网格背景+微噪点、卡片错峰入场、思考时间线逐格点亮+处理脉冲；Element Plus 主题对齐
+- ChatView/AdminView 共用该系统，无需改结构即全面换皮；AdminView 图表配色对齐主题
+- 后端契约不变；`vue-tsc -b` typecheck 通过
+
+## 更早完成项（前端对接接口，ADR-13）
 
 ## 上个完成项（前端对接接口，ADR-13）
 - `CamelModel`(camelCase 序列化) + 重写 schemas(chat/admin/common)对齐 `frontend/src/api/types.ts`
