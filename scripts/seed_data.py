@@ -38,6 +38,88 @@ POLICIES = [
 ]
 
 
+# 确定性"场景订单"：每条覆盖一个 Skill 分支，固定 order_no，可复现。
+# (order_no, 建议消息, 预期场景, 订单条件)
+SCENARIOS = [
+    ("DEMO-REFUND-LOW", "我要退款", "退款·低风险→自动草稿", {"amount": 120}),
+    ("DEMO-REFUND-500", "我要退款", "退款·金额边界500→不触发(自动)", {"amount": 500}),
+    ("DEMO-REFUND-501", "我要退款", "退款·金额边界501→人工", {"amount": 501}),
+    ("DEMO-REFUND-HIGH", "我要退款", "退款·高金额→人工", {"amount": 999}),
+    ("DEMO-REFUND-FRESH", "这个生鲜我要退款", "退款·生鲜→人工", {"amount": 60, "product": "fresh_food"}),
+    ("DEMO-REFUND-CUSTOM", "这个定制的我要退款", "退款·定制→人工", {"amount": 80, "product": "customized_product"}),
+    ("DEMO-REFUND-OVERDUE", "我要申请退款", "退款·签收超7天→人工", {"amount": 100, "delivered_days_ago": 10}),
+    ("DEMO-REFUND-INWINDOW", "我要退款", "退款·签收7天内→自动", {"amount": 100, "delivered_days_ago": 2}),
+    ("DEMO-REFUND-CANCELLED", "我要退款", "退款·已取消→不可退转人工", {"amount": 100, "status": "cancelled"}),
+    ("DEMO-REFUND-OTHEROWNER", "我要退款", "退款·非本人订单→转人工", {"amount": 100, "other_owner": True}),
+    ("DEMO-RETURN", "我要退货", "退货·窗口内→自动", {"amount": 100, "delivered_days_ago": 2}),
+    ("DEMO-LOGI-NORMAL", "我的快递到哪了", "物流·正常播报",
+     {"status": "shipped", "logistics": {"status": "in_transit", "hours_ago": 2}}),
+    ("DEMO-LOGI-STALE", "我的快递怎么还没动", "物流·48h无更新→催件",
+     {"status": "shipped", "logistics": {"status": "in_transit", "hours_ago": 60}}),
+    ("DEMO-LOGI-EXC", "我的快递怎么了", "物流·异常标记→催件",
+     {"status": "shipped", "logistics": {"status": "in_transit", "hours_ago": 5, "is_exception": True, "reason": "中转停滞"}}),
+    ("DEMO-LOGI-NOTRECV", "物流显示签收了但我没收到", "物流·签收未收到→转人工",
+     {"status": "delivered", "delivered_days_ago": 1, "logistics": {"status": "delivered", "hours_ago": 20}}),
+    ("DEMO-LOGI-NOINFO", "我的快递到哪了", "物流·无信息→转人工", {"status": "paid"}),
+]
+
+# 纯意图场景（不依赖订单，由消息内容触发）
+INTENT_ONLY = [
+    ("我要开发票", "发票(v1兜底)"),
+    ("我的优惠券不能用", "优惠券(v1兜底)"),
+    ("东西质量太差我要投诉", "投诉→转人工"),
+    ("我要转人工", "要求人工→转人工"),
+    ("今天天气怎么样", "超范围→兜底"),
+    ("想了解你们的售后规则", "政策问答→兜底"),
+]
+
+
+def _seed_scenarios(db, now: datetime) -> tuple[int, list[tuple]]:
+    """造场景订单，返回 (demo 用户 id, [(order_id, order_no, 消息, 预期)])。"""
+    demo = User(username="demo", phone="13900000000", email="demo@example.com")
+    other = User(username="demo_other", phone="13900000001", email="other@example.com")
+    db.add_all([demo, other])
+    db.flush()
+    rows: list[tuple] = []
+    for order_no, message, expected, spec in SCENARIOS:
+        owner = other.id if spec.get("other_owner") else demo.id
+        o = Order(user_id=owner, order_no=order_no, status=spec.get("status", "paid"),
+                  total_amount=spec.get("amount", 100),
+                  product_type=spec.get("product", "normal"), paid_at=now)
+        dd = spec.get("delivered_days_ago")
+        if dd is not None:
+            o.delivered_at = now - timedelta(days=dd)
+            o.status = "delivered"
+        db.add(o)
+        db.flush()
+        lg = spec.get("logistics")
+        if lg:
+            db.add(Logistics(
+                order_id=o.id, carrier="顺丰", tracking_no=f"DEMO{o.id}",
+                status=lg.get("status", "in_transit"),
+                last_update_time=now - timedelta(hours=lg.get("hours_ago", 2)),
+                last_location="上海转运中心", is_exception=lg.get("is_exception", False),
+                exception_reason=lg.get("reason")))
+            db.flush()
+        rows.append((o.id, order_no, message, expected))
+    return demo.id, rows
+
+
+def _print_table(demo_id: int, rows: list[tuple]) -> None:
+    print(f"\n===== 场景演示对照表 (demo 用户 id={demo_id}；非本人场景订单属于 demo_other) =====")
+    print("说明：order-based 场景用 API/demo_local 测（请求带 orderId）；")
+    print("      前端聊天暂不传 orderId，退款/物流会走『请补充订单号』。\n")
+    print(f"{'order_id':>8}  {'order_no':<22}  {'建议消息':<16}  预期场景")
+    print("-" * 88)
+    for oid, order_no, message, expected in rows:
+        print(f"{oid:>8}  {order_no:<22}  {message:<16}  {expected}")
+    print("\n  纯意图场景（无需 orderId，userId 用任意已存在用户）：")
+    for message, expected in INTENT_ONLY:
+        print(f"{'—':>8}  {'—':<22}  {message:<16}  {expected}")
+    print(f"\n示例：POST /api/chat/message  {{\"userId\": {demo_id}, "
+          f"\"content\": \"我要退款\", \"orderId\": <上表 order_id>}}\n")
+
+
 def seed() -> None:
     init_db()
     rng = random.Random(42)
@@ -94,10 +176,13 @@ def seed() -> None:
                     exception_reason="长时间无揽收/中转停滞" if is_exc else None,
                 ))
 
+        demo_id, rows = _seed_scenarios(db, now)
+
         db.add_all(KnowledgeDoc(title=t, category=c, content=body) for t, c, body in POLICIES)
         db.commit()
-        logger.info("seeded: %d users, %d orders, %d policies",
-                    len(users), len(orders), len(POLICIES))
+        logger.info("seeded: %d users(含 demo/demo_other), %d 随机单 + %d 场景单, %d policies",
+                    len(users) + 2, len(orders), len(SCENARIOS), len(POLICIES))
+        _print_table(demo_id, rows)
 
 
 if __name__ == "__main__":
