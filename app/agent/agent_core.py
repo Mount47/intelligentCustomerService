@@ -65,8 +65,8 @@ class AgentCore:
         else:
             # 7 harness 统一跑 ReAct loop（真执行工具 + 回灌）
             self._run_loop(ctx, plan, tool_ctx)
-            # 8 Skill 据结果产出决策
-            decision = skill.finalize(ctx)
+            # 8 Skill 据结果产出决策（可经 tool_ctx 执行确定性写操作）
+            decision = skill.finalize(ctx, tool_ctx)
 
         # 9 guardrails 回复后校验（绝不绕过）
         decision.reply = self.guardrails.postcheck(decision.reply)
@@ -134,10 +134,14 @@ def build_default_agent(llm: LLMClient | None = None, tool_registry=None) -> Age
         from app.tools.registry import build_tool_registry
         tool_registry = build_tool_registry()
     llm = llm or StubLLMClient()
+    # 注册业务 Skill（未认领的意图落兜底 GeneralSkill）
+    from app.skills.logistics_exception.handler import LogisticsExceptionSkill
+    from app.skills.refund_handling.handler import RefundHandlingSkill
+    router = SkillRouter(skills=[RefundHandlingSkill(), LogisticsExceptionSkill()])
     return AgentCore(
         llm=llm,
         classifier=HybridIntentClassifier(llm=llm),  # 规则快路 + 同一 LLM 兜底
-        router=SkillRouter(),
+        router=router,
         state_machine=StateMachine(),
         guardrails=Guardrails(),
         tool_registry=tool_registry,

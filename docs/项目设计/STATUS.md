@@ -9,10 +9,17 @@
 ---
 
 ## 当前阶段
-**M4 完成（未提交）** — 多 provider 适配层 + harness loop 真执行工具，33 passed。
-> ⚠️ 这批改动尚未 git commit（用户拦下了上次提交，待确认提交方式）。
+**M5 完成** — RefundHandling + LogisticsException 两条业务链路串通，40 passed。
 
-## 上个完成项（M4）
+## 上个完成项（M5）
+- **两个业务 Skill（声明式，ADR-8）**：`skills/refund_handling` + `skills/logistics_exception`（各 handler + instructions.md），注册进 SkillRouter
+  · 安全设计：LLM 在 loop 中**只读**取信息，**退款写操作与决策由 finalize 确定性执行**（不可逆动作不交给 LLM）
+  · 退款：低风险自动草稿 / 高风险→草稿(pending_human)+升级工单+转人工 / 缺单号索取 / 非本人转人工
+  · 物流：正常播报 / 48h无更新建催件工单 / 签收未收到转人工
+  · finalize 契约加 tool_ctx；状态机加 created→need_human（升级工单）
+- tests/test_skills（7 passed，全套 40）
+
+## 更早完成项（M4）
 - **M4·loop 执行**：`agent_core` harness loop 真执行工具（tool_use→execute→结果回灌→end_turn）+ 白名单越权拦截 + token 跨轮累计；`HybridIntentClassifier`(规则+LLM兜底)；`handle(ctx, tool_ctx)` 接 ToolContext。tests/test_agent_loop（3 passed）
 - **M4·适配层（ADR-11）**：`claude_adapter`(anthropic) + `openai_compat_adapter`(GPT/DeepSeek/Qwen/vLLM/Ollama) + `registry`(按 LLM_PROVIDER 选)；`Msg` 扩展 tool_call_id/tool_calls；SDK 延迟导入；config 加 LLM_MAX_TOKENS/LLM_THINKING；.env 加示例。tests/test_llm_adapters（5 passed）
 
@@ -24,12 +31,12 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （M4 收尾）— 待提交 + 启动 M5
+- （M5 收尾）— 待启动 M6
 
 ## 下一步
-- M5：RefundHandlingSkill（plan 给退款工具白名单+指令、finalize 据 tool_call_records 决策；高风险→建工单+转人工）+ LogisticsExceptionSkill；注册进 SkillRouter
-- 之后 M6：异步 API 闭环（/chat/message 落库入队、/chat/session 轮询 + steps 时间线）
-- 真实 provider 联调（需 key）：M5 后用真 .env 端到端跑一次
+- M6：异步 API 闭环 —— `POST /chat/message`(消息幂等去重 + 落库 + 建 session + 入队，立即返回) + `GET /chat/session/{id}`(轮询 task_status + latest_reply + **steps 时间线** 给前端) + Celery `process_agent_message`(消费→跑 AgentCore→写回 session/消息)
+- 真实 provider 联调（需 key）：M6 后用真 .env + docker 端到端跑一次（链路已完整，此时联调最有价值）
+- 之后 M7 评测 / M8 压测+README / M9 并发幂等 / M10·M11 前端对接
 
 ## 验证说明
 - 已验证：venv 全套 **25 passed**（含退款三层幂等、工具审计落库、幂等贯通工具层）
@@ -55,8 +62,8 @@
 | M1 | 骨架 + docker-compose | ✅ |
 | M2 | 11 张表 + seed_data | ✅ |
 | M3 | Service + Tool + tool_calls 日志 | ✅ |
-| M4 | 状态机 + AgentCore + LLM适配层 + loop执行 | ✅(未提交) |
-| M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ⬜ |
+| M4 | 状态机 + AgentCore + LLM适配层 + loop执行 | ✅ |
+| M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ✅ |
 | M6 | Celery + 轮询闭环 | ⬜ |
 | M7 | 评测集（30+5）+ run_eval | ⬜ |
 | M8 | 压测 + README | ⬜ |

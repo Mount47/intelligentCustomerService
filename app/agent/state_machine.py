@@ -33,7 +33,7 @@ class States:
 
 # 合法转移表：from -> {允许的 to}
 TRANSITIONS: dict[str, set[str]] = {
-    States.CREATED: {States.INTENT_DETECTED},
+    States.CREATED: {States.INTENT_DETECTED, States.NEED_HUMAN},  # 升级工单可直接转人工
     States.INTENT_DETECTED: {
         States.INFO_REQUIRED, States.TOOL_EXECUTING,
         States.NEED_HUMAN, States.RESOLVED_BY_AGENT,

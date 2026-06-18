@@ -36,7 +36,7 @@ class _OrderSkill:
         return SkillPlan(system_prompt="查订单助手", allowed_tools=["get_order_detail"],
                          max_iterations=3)
 
-    def finalize(self, ctx):
+    def finalize(self, ctx, tool_ctx=None):
         reply = ctx.history[-1].content if ctx.history else "已完成"
         return Decision(reply=reply, next_state=States.RESOLVED_BY_AGENT)
 

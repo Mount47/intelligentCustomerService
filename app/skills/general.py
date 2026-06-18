@@ -25,7 +25,7 @@ class GeneralSkill:
             max_iterations=1,
         )
 
-    def finalize(self, ctx: AgentContext) -> Decision:
+    def finalize(self, ctx: AgentContext, tool_ctx=None) -> Decision:
         # 骨架：用 loop 末轮 LLM 文本（已在 history 由 harness 处理）或 canned
         reply = (ctx.history[-1].content if ctx.history else "") or \
             "您的问题已收到，我们会尽快为您处理。"
