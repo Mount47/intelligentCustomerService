@@ -21,12 +21,17 @@ class GeneralSkill:
                 "你是电商售后助手。只能依据工具结果或政策知识库回答，"
                 "不得编造，不得承诺一定退款/赔偿/送达时间。"
             ),
-            allowed_tools=[],     # 骨架阶段无工具
-            max_iterations=1,
+            allowed_tools=["search_policy_docs"],   # 允许检索政策以引用来源
+            max_iterations=2,
         )
 
     def finalize(self, ctx: AgentContext, tool_ctx=None) -> Decision:
-        # 骨架：用 loop 末轮 LLM 文本（已在 history 由 harness 处理）或 canned
+        # 明确要求人工 / 投诉 → 转人工（情绪/投诉优先转人工，不承诺赔偿）
+        if ctx.intent in (Intents.HUMAN_HANDOFF, Intents.PRODUCT_COMPLAINT):
+            return Decision(
+                "非常理解您的诉求，已为您升级人工专员跟进，请稍候。",
+                States.NEED_HUMAN, need_handoff=True, handoff_reason=ctx.intent)
+        # 其余（政策问答 / 超范围 / 暂未支持的意图）→ 兜底回复，不编造
         reply = (ctx.history[-1].content if ctx.history else "") or \
-            "您的问题已收到，我们会尽快为您处理。"
+            "您的问题已收到，我们会尽快为您处理；如需具体业务办理可提供订单号。"
         return Decision(reply=reply, next_state=States.RESOLVED_BY_AGENT)

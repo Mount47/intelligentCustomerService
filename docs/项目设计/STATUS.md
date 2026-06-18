@@ -9,9 +9,18 @@
 ---
 
 ## 当前阶段
-**M6 完成** — 异步 API 闭环跑通（POST 入队 / GET 轮询 + steps / worker 处理），45 passed。
+**M7 完成** — 评测集(30常规+5对抗) + run_eval，stub 全指标达标，47 passed。
 
-## 上个完成项（M6）
+## 上个完成项（M7）
+- **评测（§16/§23.3）**：`app/eval/test_cases.json`(30 常规 + 5 对抗) + `metrics.py` + `run_eval.py`（默认 stub 可复现，`--real` 用 .env 真模型）
+  · 流程类：intent/skill/state/handoff 准确率 + tool_call_success_rate
+  · 质量类：policy_compliance / forbidden_phrase_block / high_risk_handoff / resolution_rate
+  · 成本类：avg_tokens / avg_cost per session
+  · stub 跑分：流程+合规指标全 1.0，resolution 0.514
+- GeneralSkill 补行为：human_handoff/product_complaint → 转人工（情绪/投诉优先转人工）
+- tests/test_eval（2 passed，全套 47）
+
+## 更早完成项（M6）
 - **异步 API 闭环（§10/§14/ADR-10）**：
   · `POST /api/chat/message`：消息幂等去重 + 落库 + 建 session(queued) + 入队，立即返回（不阻塞）
   · `GET /api/chat/session/{id}`：task_status + latest_reply + **steps 时间线**(意图→技能→工具→结果) + token 视图
@@ -39,7 +48,11 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （本地运行模式就绪）— 可本地真模型联调 / 进 M7
+- （M7 收尾）— 进 M8 压测+README
+
+## 下一步
+- M8：Locust 压测 `POST /chat/message`(接入层削峰，P95<300ms/入队成功率>99%) + README（项目介绍/架构/状态机/Skill/工具/幂等/运行·测试·评测·压测/亮点/后续）
+- 之后 M9 并发幂等(postgres 真并发) / M10·M11 前端对接
 
 ## 本地运行（无需 docker/redis/celery）
 - `AGENT_DISPATCH=thread`：POST 用后台线程跑，轮询闭环照常（本地只需 uvicorn+sqlite）
@@ -80,7 +93,7 @@
 | M4 | 状态机 + AgentCore + LLM适配层 + loop执行 | ✅ |
 | M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ✅ |
 | M6 | Celery + 轮询闭环 | ✅ |
-| M7 | 评测集（30+5）+ run_eval | ⬜ |
+| M7 | 评测集（30+5）+ run_eval | ✅ |
 | M8 | 压测 + README | ⬜ |
 | M9 | 并发幂等测试 + pytest + tracing | ⬜ |
 | M10 | 前端·用户聊天端（Vue3，思考过程时间线，轮询） | ⬜ |
