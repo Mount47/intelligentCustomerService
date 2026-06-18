@@ -63,3 +63,13 @@
 - **时机**：后端核心 M3~M6 跑通（有真实 /chat/message、/chat/session、admin metrics）后再做前端里程碑，避免对着 mock 返工。
 **影响后端**：`GET /chat/session` 响应需带 `steps/timeline`（意图/技能/工具调用进展）供前端点亮；需补 admin 端点（metrics/tickets/sessions/tool_calls）。
 **为什么**：用户要求页面精美 + 可输入得回复 + 看简单思考过程 + 管理员端；前端正好把异步状态/Agent 决策轨迹/成本可视化，是展示亮点。
+
+## ADR-11 · 2026-06-18 · LLM 适配器广覆盖：2 个适配器覆盖全部主流模型
+**决策**：`LLMClient` 抽象下只需 **2 个适配器**即覆盖 Claude/GPT/DeepSeek/Qwen/本地：
+- `ClaudeAdapter`：anthropic SDK（Claude 自有协议；adaptive thinking、prompt caching、usage）。
+- `OpenAICompatAdapter`：openai SDK + `base_url`，覆盖 **GPT / DeepSeek / Qwen / vLLM / Ollama**（它们都暴露 OpenAI 兼容的 chat.completions + function calling）。
+- `registry.build_llm_client` 按 `.env` 的 `LLM_PROVIDER` 选：`claude`→Claude；`openai/openai_compat/deepseek/qwen/gpt/vllm/ollama`→OpenAICompat；`stub`→离线桩。
+- 切模型/厂商 = 改 `.env`（`LLM_PROVIDER` + `LLM_MODEL` + key + `OPENAI_BASE_URL`），不动代码。
+- 工具调用归一化为 provider 无关的 `LLMResponse.tool_calls`；`Msg` 扩展 `tool_call_id/tool_calls` 以支持 agent loop 的工具结果回放。
+- **SDK 延迟导入**（adapter 内构造 client 时才 import），离线/未装 SDK 也能单测，且 anthropic/openai 成可选依赖。
+**为什么**：用户要求适配器兼容各种模型（Claude/GPT/DeepSeek/Qwen…）走 API；OpenAI 兼容协议是事实标准，一个适配器吃下大半生态，工程量最小、可降本切换。

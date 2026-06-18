@@ -38,6 +38,14 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+ALL_INTENTS: tuple[str, ...] = (
+    Intents.ORDER_QUERY, Intents.LOGISTICS_QUERY, Intents.LOGISTICS_EXCEPTION,
+    Intents.REFUND_REQUEST, Intents.RETURN_REQUEST, Intents.INVOICE_REQUEST,
+    Intents.COUPON_ISSUE, Intents.PRODUCT_COMPLAINT, Intents.HUMAN_HANDOFF,
+    Intents.GENERAL_POLICY_QUERY, Intents.OUT_OF_SCOPE,
+)
+
+
 class RuleIntentClassifier:
     """规则快路。命中返回 (intent, from_rule=True)；未命中返回兜底意图 from_rule=False。"""
 
@@ -47,6 +55,40 @@ class RuleIntentClassifier:
             if any(kw in text for kw in kws):
                 logger.info("intent(rule)=%s", intent)
                 return intent, True
-        # TODO(M4): LLM 兜底。骨架先归 general_policy_query 占位。
-        logger.info("intent(fallback)=%s", Intents.GENERAL_POLICY_QUERY)
+        logger.info("intent(rule-miss)")
         return Intents.GENERAL_POLICY_QUERY, False
+
+
+class HybridIntentClassifier:
+    """规则快路 + LLM 兜底（ADR-7）。规则命中即返回；未命中且有 llm 则让 LLM 选一个意图。"""
+
+    def __init__(self, llm=None, rule: RuleIntentClassifier | None = None) -> None:
+        self.rule = rule or RuleIntentClassifier()
+        self.llm = llm
+
+    def classify(self, message: str) -> tuple[str, bool]:
+        intent, from_rule = self.rule.classify(message)
+        if from_rule:
+            return intent, True
+        if self.llm is not None:
+            picked = self._classify_llm(message)
+            if picked:
+                logger.info("intent(llm)=%s", picked)
+                return picked, False
+        return intent, False  # 兜底 general_policy_query
+
+    def _classify_llm(self, message: str) -> str | None:
+        from app.llm.base import Msg
+        system = (
+            "你是售后意图分类器。从下列意图中选最匹配的一个，"
+            "只输出英文标识本身，不要解释：\n" + ", ".join(ALL_INTENTS)
+        )
+        try:
+            resp = self.llm.chat(system=system, messages=[Msg("user", message)])
+        except Exception:  # noqa: BLE001 — 分类失败不阻断主流程
+            return None
+        text = (resp.text or "").strip().lower()
+        for it in ALL_INTENTS:
+            if it in text:
+                return it
+        return None

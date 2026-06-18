@@ -13,6 +13,8 @@ from typing import Protocol
 class Msg:
     role: str            # user | assistant | tool | system
     content: str
+    tool_call_id: str | None = None        # role=tool 时：对应的工具调用 id
+    tool_calls: list["ToolCall"] | None = None  # role=assistant 时：携带的工具调用（回放用）
 
 
 @dataclass

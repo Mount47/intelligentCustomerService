@@ -9,9 +9,14 @@
 ---
 
 ## 当前阶段
-**M3 完成** — services + tools + 三层幂等实现就位，25 passed。
+**M4 完成（未提交）** — 多 provider 适配层 + harness loop 真执行工具，33 passed。
+> ⚠️ 这批改动尚未 git commit（用户拦下了上次提交，待确认提交方式）。
 
-## 上个完成项
+## 上个完成项（M4）
+- **M4·loop 执行**：`agent_core` harness loop 真执行工具（tool_use→execute→结果回灌→end_turn）+ 白名单越权拦截 + token 跨轮累计；`HybridIntentClassifier`(规则+LLM兜底)；`handle(ctx, tool_ctx)` 接 ToolContext。tests/test_agent_loop（3 passed）
+- **M4·适配层（ADR-11）**：`claude_adapter`(anthropic) + `openai_compat_adapter`(GPT/DeepSeek/Qwen/vLLM/Ollama) + `registry`(按 LLM_PROVIDER 选)；`Msg` 扩展 tool_call_id/tool_calls；SDK 延迟导入；config 加 LLM_MAX_TOKENS/LLM_THINKING；.env 加示例。tests/test_llm_adapters（5 passed）
+
+## 更早完成项
 - **M3 services+tools**：6 个 service（order/logistics/refund/ticket/sla/knowledge）+ 5 个 tool 模块(14 工具) + `tools/base`(ToolResult + ToolRegistry 自动写 agent_tool_calls) + `tools/registry`；接进 `AgentCore.tool_registry`（据 SkillPlan.allowed_tools 取 specs）
   · **退款三层幂等**(refund_service)：层1 客户端 idempotency_key + request_hash、层2 business_key 去重、层3 DB 唯一约束兜底(捕 IntegrityError 回查)；高风险→pending_human 不自动退
   · tests：refund_idempotency 5 + services 6 + tools 4 = 15 passed（全套 25）
@@ -19,11 +24,12 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （M3 收尾）— 待启动 M4
+- （M4 收尾）— 待提交 + 启动 M5
 
 ## 下一步
-- M4：真实 LLM 适配器（ClaudeAdapter，anthropic SDK，.env 选 provider）+ LLMIntentClassifier 兜底；harness loop 实跑工具执行（ToolContext 进 loop）
-- 之后 M5：RefundHandlingSkill + LogisticsExceptionSkill（串通真实链路）
+- M5：RefundHandlingSkill（plan 给退款工具白名单+指令、finalize 据 tool_call_records 决策；高风险→建工单+转人工）+ LogisticsExceptionSkill；注册进 SkillRouter
+- 之后 M6：异步 API 闭环（/chat/message 落库入队、/chat/session 轮询 + steps 时间线）
+- 真实 provider 联调（需 key）：M5 后用真 .env 端到端跑一次
 
 ## 验证说明
 - 已验证：venv 全套 **25 passed**（含退款三层幂等、工具审计落库、幂等贯通工具层）
@@ -49,7 +55,7 @@
 | M1 | 骨架 + docker-compose | ✅ |
 | M2 | 11 张表 + seed_data | ✅ |
 | M3 | Service + Tool + tool_calls 日志 | ✅ |
-| M4 | 状态机 + AgentCore（规则意图/路由） | ⬜ |
+| M4 | 状态机 + AgentCore + LLM适配层 + loop执行 | ✅(未提交) |
 | M5 | RefundSkill（三层幂等）+ LogisticsSkill + guardrails | ⬜ |
 | M6 | Celery + 轮询闭环 | ⬜ |
 | M7 | 评测集（30+5）+ run_eval | ⬜ |

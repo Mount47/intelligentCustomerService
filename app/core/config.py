@@ -28,12 +28,14 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"
 
-    # LLM —— provider 可插拔，模型名不写死代码
-    llm_provider: str = "claude"
+    # LLM —— provider 可插拔，模型名不写死代码（ADR-11）
+    llm_provider: str = "claude"   # claude | openai_compat | deepseek | qwen | gpt | vllm | ollama | stub
     llm_model: str = "claude-opus-4-8"
+    llm_max_tokens: int = 16000
+    llm_thinking: str = "adaptive"  # adaptive | off（仅 Claude 4.x 生效）
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    openai_base_url: str = ""
+    openai_base_url: str = ""       # OpenAI兼容厂商的 base_url（DeepSeek/Qwen/本地 vLLM 等）
 
     # 业务阈值（配置化）
     refund_high_amount_threshold: float = 500.0
