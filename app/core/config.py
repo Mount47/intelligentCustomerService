@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Celery
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"
+    # 任务调度：celery（生产）| thread（本地无 broker，后台线程直接跑）
+    agent_dispatch: str = "celery"
 
     # LLM —— provider 可插拔，模型名不写死代码（ADR-11）
     llm_provider: str = "claude"   # claude | openai_compat | deepseek | qwen | gpt | vllm | ollama | stub

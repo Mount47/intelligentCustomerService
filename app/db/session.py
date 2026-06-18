@@ -16,11 +16,17 @@ logger = get_logger(__name__)
 
 _settings = get_settings()
 
+# sqlite 本地模式需允许跨线程（后台线程调度）
+_connect_args: dict = {}
+if _settings.database_url.startswith("sqlite"):
+    _connect_args["check_same_thread"] = False
+
 # pool_pre_ping：连接前探活，避免拿到失效连接
 engine = create_engine(
     _settings.database_url,
     pool_pre_ping=True,
     future=True,
+    connect_args=_connect_args,
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

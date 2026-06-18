@@ -12,9 +12,30 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 def _dispatch(session_id: int) -> None:
-    """投递异步任务。单独成函数，便于测试 monkeypatch（避免连真实 broker）。"""
-    from app.workers.agent_tasks import process_agent_message
-    process_agent_message.delay(session_id)
+    """投递异步处理。单独成函数，便于测试 monkeypatch。
+
+    - celery（默认/生产）：入队，worker 消费
+    - thread（本地无 broker）：后台线程直接跑 run_agent_session，轮询闭环照常
+    """
+    from app.core.config import get_settings
+
+    if get_settings().agent_dispatch == "thread":
+        import threading
+
+        from app.db.session import SessionLocal
+        from app.workers.runner import run_agent_session
+
+        def _bg() -> None:
+            db = SessionLocal()
+            try:
+                run_agent_session(db, session_id)
+            finally:
+                db.close()
+
+        threading.Thread(target=_bg, daemon=True).start()
+    else:
+        from app.workers.agent_tasks import process_agent_message
+        process_agent_message.delay(session_id)
 
 
 @router.post("/message", response_model=ChatMessageAccepted)

@@ -39,7 +39,14 @@
 - **M1.5 骨架**：agent 脊椎（4）；**M1**：FastAPI 骨架（2）
 
 ## 当前在做
-- （M6 收尾）— 后端核心闭环已完整；可联调 / 进 M7
+- （本地运行模式就绪）— 可本地真模型联调 / 进 M7
+
+## 本地运行（无需 docker/redis/celery）
+- `AGENT_DISPATCH=thread`：POST 用后台线程跑，轮询闭环照常（本地只需 uvicorn+sqlite）
+- `scripts/demo_local.py`：连服务器都不用，sqlite 直接跑 Agent，打印 回复/思考步骤/token
+  · stub：`DATABASE_URL=sqlite:///./_demo.db LLM_PROVIDER=stub python -m scripts.demo_local`
+  · 真模型：设 LLM_PROVIDER/LLM_MODEL/key/base_url（见脚本 docstring）
+- 已本地实跑 demo（stub）：低风险退款/高风险转人工/物流催件/兜底 四场景行为正确
 
 ## 下一步（二选一，看你优先级）
 - **A 真实联调**：用真 .env（Claude/DeepSeek key）+ `docker compose up` 端到端跑一次（需你在终端跑 docker；我没法跑）。这是首次验证"真实模型+真实PG+异步削峰"
