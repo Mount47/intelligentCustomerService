@@ -13,6 +13,9 @@ def process_agent_message(self, session_id: int) -> None:
     from app.db.session import SessionLocal
     db = SessionLocal()
     try:
-        run_agent_session(db, session_id)
+        # raise_on_error=True：失败/超时重抛 → celery 退避重试；耗尽则会话留在 failed/timeout
+        run_agent_session(db, session_id, raise_on_error=True)
+    except Exception as exc:  # noqa: BLE001
+        raise self.retry(exc=exc)
     finally:
         db.close()

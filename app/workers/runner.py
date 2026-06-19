@@ -28,7 +28,10 @@ def task_status_for(state: str) -> str:
     return "completed"
 
 
-def run_agent_session(db: Session, session_id: int, agent=None) -> None:
+def run_agent_session(db: Session, session_id: int, agent=None,
+                      raise_on_error: bool = False) -> None:
+    """处理一个会话。raise_on_error=True 时（celery 路径）失败会重抛以便重试；
+    默认 False（线程/测试路径）吞掉异常并标记 failed/timeout。"""
     sess = db.get(AgentSession, session_id)
     if sess is None:
         logger.warning("run_agent_session: session %s not found", session_id)
@@ -73,10 +76,15 @@ def run_agent_session(db: Session, session_id: int, agent=None) -> None:
         sess.cache_hit = acct.cache_hit
         sess.task_status = task_status_for(ctx.state)
         ticket.status = ctx.state  # 工单状态由 agent 最终态驱动
-    except Exception as exc:  # noqa: BLE001 — 异步任务不崩，标记 failed
+    except Exception as exc:  # noqa: BLE001 — 异步任务不崩
         logger.exception("agent session %s failed", session_id)
-        sess.task_status = "failed"
-        sess.error_message = str(exc)[:500]
+        # 超时单独标记（不导入 celery，按类名判断 SoftTimeLimitExceeded）
+        is_timeout = type(exc).__name__ == "SoftTimeLimitExceeded"
+        sess.task_status = "timeout" if is_timeout else "failed"
+        sess.error_message = ("处理超时" if is_timeout else str(exc))[:500]
+        sess.retry_count = (sess.retry_count or 0) + 1
+        if raise_on_error:
+            raise            # 交给 celery 重试（finally 仍会落库当前态）
     finally:
         sess.finished_at = datetime.utcnow()
         db.commit()
