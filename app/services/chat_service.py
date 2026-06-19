@@ -5,11 +5,13 @@ build_chat_session：组装前端 ChatSession（messages + steps 时间线 + too
 """
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SupportFlowError
-from app.db.models import AgentSession, AgentToolCall, Ticket, TicketMessage
+from app.db.models import AgentSession, AgentToolCall, Order, Ticket, TicketMessage
 from app.schemas.chat import (
     AgentTimelineStep,
     ChatMessageIn,
@@ -33,6 +35,27 @@ TOOL_LABELS = {
 }
 
 
+def resolve_order_from_text(db: Session, user_id: int, content: str) -> int | None:
+    """从消息文本里提取订单号并解析为该用户的订单 id（校验归属）。
+
+    支持 order_no（如 DEMO-REFUND-LOW / SO20260618xxxx）或纯数字 order_id。
+    让用户自然地说"我要退款 订单 XXX"即可单轮跑通，无需前端单独传 orderId。
+    """
+    tokens = set(re.findall(r"[A-Za-z0-9\-]{3,}", content or ""))
+    if not tokens:
+        return None
+    o = db.scalar(select(Order).where(
+        Order.user_id == user_id, Order.order_no.in_(tokens)))
+    if o:
+        return o.id
+    for t in tokens:                       # 纯数字按 order_id 尝试（仍校验归属）
+        if t.isdigit():
+            od = db.get(Order, int(t))
+            if od and od.user_id == user_id:
+                return od.id
+    return None
+
+
 def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, bool]:
     # 1 消息幂等去重（§9.1）
     if payload.client_message_id:
@@ -46,14 +69,19 @@ def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, b
             if sess:
                 return sess, True
 
-    # 2 建/取 ticket
+    # 2 建/取 ticket（order_id 优先用入参，否则从消息文本解析）
+    order_id = payload.order_id
+    if order_id is None:
+        order_id = resolve_order_from_text(db, payload.user_id, payload.content)
     if payload.ticket_id is not None:
         ticket = db.get(Ticket, payload.ticket_id)
         if ticket is None:
             raise SupportFlowError("ticket not found")
+        if ticket.order_id is None and order_id is not None:
+            ticket.order_id = order_id     # 多轮：补上后续消息里给出的订单
     else:
         ticket = ticket_service.create_ticket(
-            db, payload.user_id, category="chat", order_id=payload.order_id)
+            db, payload.user_id, category="chat", order_id=order_id)
 
     # 3 落用户消息
     ticket_service.add_message(

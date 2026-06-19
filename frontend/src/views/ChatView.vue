@@ -4,8 +4,8 @@ import { CircleCheck, Clock, Cpu, Message, RefreshRight, Warning } from "@elemen
 import { api } from "../api/client";
 import type { AgentTimelineStep, ChatSession, TaskStatus } from "../api/types";
 
-const userId = ref("1");
-const input = ref("我想申请订单 SO202606180018 的退款，商品没有拆封。");
+const userId = ref("11");   // seed 的 demo 用户；订单号见 seed_data 对照表
+const input = ref("我要退款 订单 DEMO-REFUND-LOW");
 const session = ref<ChatSession | null>(null);
 const loading = ref(false);
 const sending = ref(false);
@@ -123,7 +123,7 @@ onBeforeUnmount(stopPoll);
             type="textarea"
             :autosize="{ minRows: 2, maxRows: 4 }"
             resize="none"
-            placeholder="输入售后问题，例如：我想申请订单 SO202606180018 的退款"
+            placeholder="输入售后问题；涉及订单可带订单号，例如：我要退款 订单 DEMO-REFUND-LOW"
           />
           <el-button type="primary" native-type="submit" :loading="sending">
             发送

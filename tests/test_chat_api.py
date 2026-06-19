@@ -107,3 +107,19 @@ def test_run_agent_session_high_risk_need_human(db, user_order):
     db.refresh(sess)
     assert sess.task_status == "need_human"
     assert sess.final_status == "need_human"
+
+
+def test_resolve_order_from_text(db, user_order):
+    u, o = user_order
+    assert chat_service.resolve_order_from_text(db, u.id, f"退款 订单 {o.order_no}") == o.id
+    assert chat_service.resolve_order_from_text(db, u.id, "随便聊两句") is None
+    assert chat_service.resolve_order_from_text(db, u.id + 999, o.order_no) is None  # 非本人
+
+
+def test_order_in_text_runs_refund_single_turn(db, user_order):
+    u, o = user_order   # 普通 paid 100 → 低风险
+    sess, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content=f"我要退款 订单 {o.order_no}"))
+    run_agent_session(db, sess.id, agent=build_default_agent())
+    db.refresh(sess)
+    assert sess.final_status == "resolved_by_agent"   # 文本解析到订单→单轮自动，而非索取信息
