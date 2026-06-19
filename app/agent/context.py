@@ -49,7 +49,11 @@ class TokenAcct:
         )
         if usage.cache_read_tokens:
             self.cache_hit = True
-        # 真实价目折算留待接入真实 provider 时按 .env 单价计算（ADR-7）
+        # 真实成本折算：按模型价目（缓存读打折），未知/stub → 0
+        from app.llm.pricing import estimate_cost
+        self.estimated_cost = estimate_cost(
+            self.model_name, self.prompt_tokens, self.completion_tokens, self.cache_read_tokens
+        )
 
 
 @dataclass
