@@ -122,9 +122,21 @@ class AgentCore:
             ctx.tool_call_records.append(
                 ToolCallRecord(tc.name, tc.arguments, result, False, 0, "no tool context"))
             return result
-        result, record = self.tools.execute(tool_ctx, tc.name, tc.arguments)
+        # 上下文参数绑定（#5 硬保证 + 越权防护）：user_id/order_id 用会话真值覆盖 LLM 所填，
+        # LLM 填错/越权(传他人 id)都无效。只绑工具 schema 声明了的参数，避免 unexpected kwarg。
+        args = self._bind_context_args(ctx, tc.name, tc.arguments)
+        result, record = self.tools.execute(tool_ctx, tc.name, args)
         ctx.tool_call_records.append(record)
         return result
+
+    def _bind_context_args(self, ctx: AgentContext, name: str, args: dict | None) -> dict:
+        bound = dict(args or {})
+        props = self.tools.schema_props(name)
+        if "user_id" in props:                       # 强制会话用户，防 LLM 越权查他人
+            bound["user_id"] = ctx.user_id
+        if "order_id" in props and ctx.order_id is not None:  # 强制本次会话订单
+            bound["order_id"] = ctx.order_id
+        return bound
 
 
 def _context_note(ctx: AgentContext) -> str:

@@ -53,6 +53,11 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
+    def schema_props(self, name: str) -> set[str]:
+        """某工具 input_schema 声明的参数名集合（供 harness 做上下文参数绑定）。"""
+        t = self._tools.get(name)
+        return set((t.input_schema or {}).get("properties", {})) if t else set()
+
     def specs(self, names: list[str] | None = None) -> list[ToolSpec]:
         """供 LLM 的工具规格（按白名单过滤）。"""
         sel = names or self.names()

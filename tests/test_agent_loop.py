@@ -9,10 +9,12 @@ from app.agent.guardrails import Guardrails
 from app.agent.intent_classifier import HybridIntentClassifier
 from app.agent.skill_router import SkillRouter
 from app.agent.state_machine import StateMachine, States
-from app.db.models import AgentSession, AgentToolCall
+from app.db.models import AgentSession, AgentToolCall, User
 from app.llm.base import LLMResponse, ToolCall, Usage
 from app.tools.base import ToolContext
 from app.tools.registry import build_tool_registry
+
+from .conftest import make_order
 
 
 class ScriptedLLM:
@@ -80,6 +82,36 @@ def test_context_injected_into_system_prompt(db, user_order):
     agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
     assert f"order_id={o.id}" in captured["system"]
     assert f"user_id={u.id}" in captured["system"]
+
+
+def test_context_binding_overrides_llm_args(db, user_order):
+    """#5 硬保证：LLM 传错/越权的 order_id、user_id 在执行前被会话真值覆盖。"""
+    u, o = user_order
+    other = User(username="mallory")
+    db.add(other)
+    db.flush()
+    o2 = make_order(db, other.id, amount=500)          # 别人的订单
+    sess = AgentSession(user_id=u.id)
+    db.add(sess)
+    db.flush()
+
+    llm = ScriptedLLM([
+        # LLM 尝试查"别人的订单 + 别人的 user_id"（越权）
+        LLMResponse(text="", tool_calls=[ToolCall("t1", "get_order_detail",
+                    {"order_id": o2.id, "user_id": other.id})],
+                    stop_reason="tool_use", usage=Usage(5, 0, 0, 5)),
+        LLMResponse(text="done", stop_reason="end_turn", usage=Usage(1, 1, 0, 2)),
+    ])
+    agent = _agent(llm)
+    ctx = AgentContext(session_id=sess.id, ticket_id=1, user_id=u.id,
+                       message="查我的订单", order_id=o.id)
+    agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
+
+    rec = ctx.tool_call_records[0]
+    assert rec.input_json["order_id"] == o.id          # 被绑定为会话订单
+    assert rec.input_json["user_id"] == u.id           # 被绑定为会话用户（防越权）
+    assert rec.success is True
+    assert rec.result["data"]["order_id"] == o.id      # 查到自己的单，不是别人的 o2
 
 
 def test_loop_executes_tool_and_feeds_back(db, user_order):
