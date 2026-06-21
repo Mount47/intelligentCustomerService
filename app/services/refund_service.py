@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -155,3 +155,22 @@ def create_refund_draft(
 def get_refund_status(db: Session, refund_id: int) -> dict | None:
     rr = db.get(RefundRequest, refund_id)
     return _result(rr) if rr else None
+
+
+# 进行中的退款状态（会话级幂等用：同订单已有这些状态的退款则不再新建）
+_ACTIVE_REFUND_STATUSES = ("draft", "pending_human", "approved")
+
+
+def get_active_refund(db: Session, user_id: int, order_id: int) -> RefundRequest | None:
+    """该用户该订单当前是否已有进行中的退款。
+
+    三层幂等防的是"同一请求重发"；这里防的是"同订单跨对话轮次/换措辞反复触发"
+    （会话级幂等，§9 补充 / 见 实际问题与解决.md #8）。
+    """
+    return db.scalar(
+        select(RefundRequest).where(
+            RefundRequest.user_id == user_id,
+            RefundRequest.order_id == order_id,
+            RefundRequest.status.in_(_ACTIVE_REFUND_STATUSES),
+        ).order_by(desc(RefundRequest.id))
+    )

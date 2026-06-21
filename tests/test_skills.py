@@ -64,6 +64,27 @@ def test_refund_not_owner_to_human(db, user_order):
     assert db.query(RefundRequest).count() == 0
 
 
+def test_refund_no_duplicate_draft_same_order(db, user_order):
+    """会话级幂等（#8）：同订单已有进行中退款 → 换措辞再触发不重复建草稿。"""
+    u, o = user_order
+    _run(db, u.id, "我要退款，不想要了", order_id=o.id)
+    d2, ctx2 = _run(db, u.id, "我还是要退款", order_id=o.id)        # 换措辞
+    d3, _ = _run(db, u.id, "我刚才退款的订单号是多少", order_id=o.id)  # 追问也被误判退款
+    assert db.query(RefundRequest).count() == 1                      # 仍只有一条草稿
+    assert "处理中" in d2.reply and ctx2.state == States.RESOLVED_BY_AGENT
+    assert "处理中" in d3.reply
+
+
+def test_refund_inflight_pending_human_not_duplicated(db, user_order):
+    """高风险已建 pending_human 草稿后，再触发 → 提示审核中，不重复建。"""
+    u, _ = user_order
+    big = make_order(db, u.id, amount=999)
+    _run(db, u.id, "这个太贵了我要退款", order_id=big.id)
+    d2, ctx2 = _run(db, u.id, "我要退款", order_id=big.id)
+    assert db.query(RefundRequest).count() == 1
+    assert ctx2.state == States.NEED_HUMAN and "审核中" in d2.reply
+
+
 # ---------- 物流 ----------
 def _add_logistics(db, order_id, status, hours_ago, is_exception=False, reason=None):
     db.add(Logistics(order_id=order_id, status=status, carrier="顺丰",

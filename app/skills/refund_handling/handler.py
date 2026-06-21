@@ -37,6 +37,18 @@ class RefundHandlingSkill:
             return Decision("请提供需要退款的订单号。", States.INFO_REQUIRED,
                             required_info=["订单号"])
 
+        # 会话级幂等（#8）：该订单已有进行中的退款 → 不重复建草稿
+        # （挡住追问/换措辞/误判反复触发；三层幂等只防同请求重发，防不住这种）
+        existing = refund_service.get_active_refund(db, ctx.user_id, ctx.order_id)
+        if existing is not None:
+            if existing.status == "pending_human":
+                return Decision(
+                    f"您该订单的退款正在人工审核中（单号 #{existing.id}），请耐心等待，无需重复提交。",
+                    States.NEED_HUMAN, need_handoff=True, handoff_reason="refund_in_progress")
+            return Decision(
+                f"您该订单的退款申请（单号 #{existing.id}）已在处理中，我们会尽快跟进，无需重复提交。",
+                States.RESOLVED_BY_AGENT)
+
         policy = refund_service.check_refund_policy(db, ctx.order_id, ctx.user_id, ctx.message)
         if not policy["eligible"]:
             reason = policy.get("reason")
