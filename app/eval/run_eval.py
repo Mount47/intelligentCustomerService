@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 from app.agent.agent_core import build_default_agent
 from app.agent.guardrails import FORBIDDEN_PHRASES
 from app.db.models import AgentToolCall, Base, Logistics, Order, User
+from app.eval.judge import build_judge
 from app.eval.metrics import summarize
 from app.schemas.chat import ChatMessageIn
 from app.services import chat_service
@@ -58,7 +59,12 @@ def _make_order(db, main_uid: int, other_uid: int, spec: dict, case_id: str) -> 
     return o.id
 
 
-def evaluate(real: bool = False) -> tuple[dict, list[dict]]:
+def evaluate(real: bool = False, judge_real: bool = False) -> tuple[dict, list[dict]]:
+    """real：Agent 用真实模型；judge_real：第二层 LLM-Judge 用真实模型打分。
+
+    默认双 stub（不调 API、确定性、CI 友好）。judge 始终运行：stub 据断言信号折算质量分，
+    real 让裁判读回复正文做语义打分（盲评，prompt 不含生产模型身份）。
+    """
     cases = json.loads(_CASES.read_text(encoding="utf-8"))
     Session = _session_factory()
 
@@ -68,6 +74,7 @@ def evaluate(real: bool = False) -> tuple[dict, list[dict]]:
     else:
         agent = build_default_agent()  # stub
 
+    judge = build_judge(real=judge_real)
     results: list[dict] = []
     with Session() as db:
         main = User(username="evald")
@@ -98,7 +105,8 @@ def evaluate(real: bool = False) -> tuple[dict, list[dict]]:
                 "case_id": c["case_id"],
                 "adversarial": bool(c.get("adversarial")),
                 "should_handoff": c.get("should_handoff", False),
-                "intent_ok": view.current_intent == c["expected_intent"],
+                # 支持一组可接受意图（Agent 的"对"未必唯一，见 oos-1）
+                "intent_ok": view.current_intent in (c.get("accept_intents") or [c["expected_intent"]]),
                 "skill_ok": view.current_skill == c["expected_skill"],
                 "state_ok": view.final_status == c["expected_final_status"],
                 "handoff_ok": pred_handoff == c.get("should_handoff", False),
@@ -113,6 +121,8 @@ def evaluate(real: bool = False) -> tuple[dict, list[dict]]:
                 "expected": {"intent": c["expected_intent"], "skill": c["expected_skill"],
                              "state": c["expected_final_status"]},
             }
+            # 第二层：质量打分（stub 据上面的断言信号折算；real 读 reply 做语义评分）
+            r["judge"] = judge.score(c, reply, r)
             results.append(r)
 
     return summarize(results), results
@@ -120,12 +130,14 @@ def evaluate(real: bool = False) -> tuple[dict, list[dict]]:
 
 def main() -> int:
     real = "--real" in sys.argv
-    summary, results = evaluate(real=real)
+    judge_real = "--judge-real" in sys.argv      # 第二层裁判用真实模型（会调 API）
+    summary, results = evaluate(real=real, judge_real=judge_real)
 
     fails = [r for r in results
              if not (r["intent_ok"] and r["skill_ok"] and r["state_ok"]
                      and r["handoff_ok"] and not r["forbidden_hits"])]
-    print(f"\n=== 评测 ({'REAL' if real else 'STUB'}) — {summary['cases']} cases ===")
+    jt = "REAL" if judge_real else "STUB"
+    print(f"\n=== 评测 (agent={'REAL' if real else 'STUB'} / judge={jt}) — {summary['cases']} cases ===")
     for k, v in summary.items():
         if k != "cases":
             print(f"  {k:32s}: {v}")
@@ -136,6 +148,15 @@ def main() -> int:
                   f" handoff_ok={r['handoff_ok']} forbidden={r['forbidden_hits']}")
     else:
         print("\n  ALL PASS ✅")
+
+    # 质量分最低的几条（裁判视角，定位"流程对但答得不好"的 case）
+    low = sorted(results, key=lambda r: r["judge"]["overall"])[:5]
+    print("\n  质量分最低 5 条（judge）：")
+    for r in low:
+        j = r["judge"]
+        print(f"   - {r['case_id']}: overall={j['overall']} "
+              f"acc={j['accuracy']} help={j['helpfulness']} comp={j['compliance']} tone={j['tone']}"
+              f"  {j.get('reason','')[:40]}")
     return 0
 
 
