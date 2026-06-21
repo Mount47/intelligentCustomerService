@@ -11,7 +11,10 @@ import type {
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true" || import.meta.env.DEV;
+// mock 规则：显式 VITE_USE_MOCK=true 强制 mock；显式 =false 强制连真后端（即便 dev）；
+// 都不设时，dev 默认 mock（零配置预览 UI）、生产默认连后端。显式设置优先于 dev 默认。
+const _mockFlag = import.meta.env.VITE_USE_MOCK;
+const USE_MOCK = _mockFlag === "true" || (_mockFlag == null && import.meta.env.DEV);
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
