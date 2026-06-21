@@ -45,13 +45,14 @@ class AgentCore:
         if ctx.state is None:
             ctx.state = States.CREATED
 
-        # 4 意图识别（规则快路 + LLM 兜底）
-        intent, _from_rule = self.classifier.classify(ctx.message)
-        ctx.intent = intent
+        # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult）
+        intent_result = self.classifier.classify_intent(ctx.message, state=ctx.state)
+        ctx.intent = intent_result.intent.value
+        ctx.intent_result = intent_result   # 供后续（确认流/Tier 分层）使用
         ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)
 
         # 5 路由 Skill；6 取 plan
-        skill = self.router.route(intent)
+        skill = self.router.route(intent_result.intent)
         ctx.skill = skill.name
         plan = skill.plan(ctx)
 

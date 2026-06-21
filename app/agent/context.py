@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict
 
 from app.llm.base import Msg, Usage
+
+if TYPE_CHECKING:
+    from app.agent.intent_classifier import IntentResult
 
 
 class ToolResult(TypedDict):
@@ -88,6 +91,7 @@ class AgentContext:
     history: list[Msg] = field(default_factory=list)
     token_acct: TokenAcct = field(default_factory=TokenAcct)
     decision: "Decision | None" = None
+    intent_result: "IntentResult | None" = None   # 结构化意图（极性/动作/置信/需确认）
 
 
 class Skill(Protocol):

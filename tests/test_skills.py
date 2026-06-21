@@ -75,6 +75,22 @@ def test_refund_no_duplicate_draft_same_order(db, user_order):
     assert "处理中" in d3.reply
 
 
+def test_refund_negation_does_not_create_draft(db, user_order):
+    """'我不想退款了' → cancel_refund，不再误建草稿（结构化意图，治 #8 误判）。"""
+    u, o = user_order
+    _, ctx = _run(db, u.id, "我不想退款了", order_id=o.id)
+    assert ctx.intent == "cancel_refund"
+    assert db.query(RefundRequest).count() == 0
+
+
+def test_refund_question_does_not_create_draft(db, user_order):
+    """'能退款吗' → refund_inquiry（疑问≠请求），不建草稿。"""
+    u, o = user_order
+    _, ctx = _run(db, u.id, "能退款吗", order_id=o.id)
+    assert ctx.intent == "refund_inquiry"
+    assert db.query(RefundRequest).count() == 0
+
+
 def test_refund_inflight_pending_human_not_duplicated(db, user_order):
     """高风险已建 pending_human 草稿后，再触发 → 提示审核中，不重复建。"""
     u, _ = user_order
