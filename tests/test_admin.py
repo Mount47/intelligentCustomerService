@@ -28,9 +28,9 @@ def test_metrics_compute(db, user_order):
 
     m = compute_metrics(db)
     assert m["totals"]["sessions"] == 3
-    assert m["sessions_by_task_status"].get("completed", 0) >= 1     # 低风险退款
+    # 低风险退款→待确认、缺单号→索取（均 waiting_user_input）；高风险→need_human
+    assert m["sessions_by_task_status"].get("waiting_user_input", 0) >= 2
     assert m["sessions_by_task_status"].get("need_human", 0) >= 1    # 高风险
-    assert m["sessions_by_task_status"].get("waiting_user_input", 0) >= 1  # 缺单号
     assert 0.0 <= m["agent"]["resolution_rate"] <= 1.0
     assert m["queue_depth"] is None or isinstance(m["queue_depth"], int)
     assert "avg_tokens_per_session" in m["cost"]

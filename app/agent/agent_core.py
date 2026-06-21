@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from app.agent.context import AgentContext, Decision, ToolCallRecord
 from app.agent.guardrails import Guardrails
-from app.agent.intent_classifier import HybridIntentClassifier
+from app.agent.intent_classifier import Confidence, HybridIntentClassifier, Intents
 from app.agent.skill_router import SkillRouter
 from app.agent.state_machine import StateMachine, States
 from app.core.logging import get_logger
@@ -48,8 +48,21 @@ class AgentCore:
         # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult）
         intent_result = self.classifier.classify_intent(ctx.message, state=ctx.state)
         ctx.intent = intent_result.intent.value
-        ctx.intent_result = intent_result   # 供后续（确认流/Tier 分层）使用
-        ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)
+        ctx.intent_result = intent_result
+        in_confirm = ctx.state == States.WAITING_USER_CONFIRM
+
+        if in_confirm:
+            # 确认握手轮：只接受 确认/取消；其余重新提示并保持等待（不误执行）
+            if intent_result.intent not in (Intents.REFUND_CONFIRMATION, Intents.CANCEL_REFUND):
+                return self._finish(ctx, Decision(
+                    "请回复『确认』以继续，或『取消』放弃本次申请。", States.WAITING_USER_CONFIRM))
+        else:
+            ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)
+            # 低置信澄清闸（路由前）：不进业务技能自由发挥，也不误执行写操作
+            if intent_result.confidence == Confidence.LOW:
+                return self._finish(ctx, Decision(
+                    "抱歉，我不太确定您的诉求——是要『提交退款』『取消退款』，还是『咨询退款政策』？请补充一下。",
+                    States.INFO_REQUIRED, required_info=["明确诉求"]))
 
         # 5 路由 Skill；6 取 plan
         skill = self.router.route(intent_result.intent)
@@ -69,10 +82,11 @@ class AgentCore:
             # 8 Skill 据结果产出决策（可经 tool_ctx 执行确定性写操作）
             decision = skill.finalize(ctx, tool_ctx)
 
-        # 9 guardrails 回复后校验（绝不绕过）
-        decision.reply = self.guardrails.postcheck(decision.reply)
+        return self._finish(ctx, decision)
 
-        # 10 状态机集中转移
+    def _finish(self, ctx: AgentContext, decision: Decision) -> Decision:
+        # 9 guardrails 回复后校验（绝不绕过）；10 状态机集中转移
+        decision.reply = self.guardrails.postcheck(decision.reply)
         ctx.state = self.sm.transition(ctx.state, decision.next_state, ticket_id=ctx.ticket_id)
         ctx.decision = decision
         return decision

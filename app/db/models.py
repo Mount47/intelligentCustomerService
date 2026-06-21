@@ -145,6 +145,9 @@ class Ticket(Base):
     status: Mapped[str] = mapped_column(String(24), default="created")   # 工单状态，对应 state_machine.States
     sla_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime)   # SLA 截止时间，超时预警用
     assigned_to: Mapped[Optional[str]] = mapped_column(String(64))       # 指派给哪位人工客服（转人工后填）
+    # 待确认的高危动作（如待确认的退款）。{type, order_id, amount, created_at}；
+    # 进 waiting_user_confirm 时写、确认/取消后清。跨轮持久化确认上下文（防"确认"误触发）。
+    pending_action: Mapped[Optional[dict]] = mapped_column(JSON)
     created_by_agent: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否 Agent 自动创建，统计自动化率
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

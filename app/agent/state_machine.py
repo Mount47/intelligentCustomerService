@@ -37,7 +37,7 @@ TRANSITIONS: dict[str, set[str]] = {
     States.INTENT_DETECTED: {
         States.INFO_REQUIRED, States.TOOL_EXECUTING,
         States.NEED_HUMAN, States.RESOLVED_BY_AGENT,
-        States.USER_ANGRY,
+        States.USER_ANGRY, States.WAITING_USER_CONFIRM,   # 退款请求→待用户确认
     },
     States.INFO_REQUIRED: {States.INFO_COLLECTED, States.NEED_HUMAN, States.CLOSED},
     States.INFO_COLLECTED: {States.TOOL_EXECUTING, States.NEED_HUMAN},
@@ -48,6 +48,7 @@ TRANSITIONS: dict[str, set[str]] = {
     States.WAITING_USER_CONFIRM: {
         States.TOOL_EXECUTING, States.RESOLVED_BY_AGENT,
         States.NEED_HUMAN, States.REJECTED,
+        States.WAITING_USER_CONFIRM,   # 非确认/取消的输入→重新提示，保持等待
     },
     States.RESOLVED_BY_AGENT: {States.CLOSED},
     States.NEED_HUMAN: {States.RESOLVED_BY_HUMAN, States.REJECTED, States.CLOSED},

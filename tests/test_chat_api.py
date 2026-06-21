@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
-from app.db.models import Base, TicketMessage, User
+from app.db.models import Base, RefundRequest, TicketMessage, User
 from app.db.session import get_db
 from app.main import app
 from app.schemas.chat import ChatMessageIn
@@ -75,27 +75,35 @@ def test_get_session_initial_state(client):
 
 
 # ---------- worker 真处理（用 stub agent 同步跑） ----------
-def test_run_agent_session_end_to_end(db, user_order):
+def test_run_agent_session_two_step_confirm(db, user_order):
+    """端到端两步确认流：我要退款→待确认(不建草稿)→确认→建草稿完成。"""
     u, o = user_order
-    sess, dedup = chat_service.accept_message(
+    # 第1轮：进入待确认
+    s1, dedup = chat_service.accept_message(
         db, ChatMessageIn(user_id=u.id, content="我要退款", order_id=o.id))
-    assert dedup is False and sess.task_status == "queued"
+    assert dedup is False and s1.task_status == "queued"
+    run_agent_session(db, s1.id, agent=build_default_agent())
+    db.refresh(s1)
+    assert s1.task_status == "waiting_user_input"
+    assert s1.current_intent == "refund_request"
+    assert s1.final_status == "waiting_user_confirm"
+    assert db.query(RefundRequest).count() == 0          # 还未建草稿
 
-    run_agent_session(db, sess.id, agent=build_default_agent())  # stub LLM
-
-    db.refresh(sess)
-    assert sess.task_status == "completed"
-    assert sess.current_intent == "refund_request"
-    assert sess.current_skill == "refund_handling"
-    assert sess.final_status == "resolved_by_agent"
-    # agent 回复已写回
-    agent_msg = db.query(TicketMessage).filter_by(ticket_id=sess.ticket_id, sender_type="agent").one()
+    # 第2轮：同一工单确认 → 建草稿、完成
+    s2, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="确认，帮我退吧", ticket_id=s1.ticket_id))
+    run_agent_session(db, s2.id, agent=build_default_agent())
+    db.refresh(s2)
+    assert s2.task_status == "completed"
+    assert s2.final_status == "resolved_by_agent"
+    assert db.query(RefundRequest).count() == 1          # 确认后才建
+    agent_msg = (db.query(TicketMessage)
+                 .filter_by(ticket_id=s2.ticket_id, sender_type="agent")
+                 .order_by(TicketMessage.id.desc()).first())
     assert "退款" in agent_msg.content
-    # 会话视图 + steps 时间线
-    view = chat_service.get_session_view(db, sess.id)
+    view = chat_service.get_session_view(db, s2.id)
     kinds = [s.kind for s in view.steps]
     assert "intent" in kinds and "skill" in kinds and "state" in kinds
-    assert view.latest_reply == agent_msg.content
 
 
 def test_run_agent_session_high_risk_need_human(db, user_order):
@@ -116,10 +124,11 @@ def test_resolve_order_from_text(db, user_order):
     assert chat_service.resolve_order_from_text(db, u.id + 999, o.order_no) is None  # 非本人
 
 
-def test_order_in_text_runs_refund_single_turn(db, user_order):
+def test_order_in_text_enters_confirm(db, user_order):
     u, o = user_order   # 普通 paid 100 → 低风险
     sess, _ = chat_service.accept_message(
         db, ChatMessageIn(user_id=u.id, content=f"我要退款 订单 {o.order_no}"))
     run_agent_session(db, sess.id, agent=build_default_agent())
     db.refresh(sess)
-    assert sess.final_status == "resolved_by_agent"   # 文本解析到订单→单轮自动，而非索取信息
+    # 文本解析到订单→进入待确认（而非"请补充订单号"）
+    assert sess.final_status == "waiting_user_confirm"

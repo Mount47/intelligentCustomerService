@@ -174,3 +174,13 @@ def get_active_refund(db: Session, user_id: int, order_id: int) -> RefundRequest
             RefundRequest.status.in_(_ACTIVE_REFUND_STATUSES),
         ).order_by(desc(RefundRequest.id))
     )
+
+
+def cancel_active_refund(db: Session, user_id: int, order_id: int) -> dict | None:
+    """撤销该订单进行中的退款（draft/pending_human → cancelled）。无则返回 None。"""
+    rr = get_active_refund(db, user_id, order_id)
+    if rr is None:
+        return None
+    rr.status = "cancelled"
+    db.commit()
+    return _result(rr)

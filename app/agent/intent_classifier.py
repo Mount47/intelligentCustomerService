@@ -173,8 +173,9 @@ class HybridIntentClassifier:
                 logger.info("intent(llm)=%s", picked.value)
                 return IntentResult(picked, Polarity.NEUTRAL, ActionType.NONE,
                                     Confidence.MEDIUM, False, "LLM 兜底")
+        # 召回未命中：按通用咨询兜底（MEDIUM，可答疑）；真正 LOW 只留给无上下文的"确认"等歧义
         return IntentResult(Intents.GENERAL_POLICY_QUERY, Polarity.NEUTRAL, ActionType.NONE,
-                            Confidence.LOW, False, "规则未命中，兜底")
+                            Confidence.MEDIUM, False, "规则未命中，按通用咨询兜底")
 
     def _classify_llm(self, message: str) -> Intents | None:
         from app.llm.base import Msg

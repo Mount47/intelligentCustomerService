@@ -25,15 +25,43 @@ def _run(db, user_id, message, order_id=None):
     return decision, ctx
 
 
+def _convo(db, user_id, order_id=None):
+    """多轮会话器：建真实 Ticket，跨轮维护 ticket.status（模拟 runner 持久化）。"""
+    agent = build_default_agent()
+    t = Ticket(user_id=user_id, category="chat", order_id=order_id)
+    db.add(t)
+    db.flush()
+
+    def send(message):
+        sess = AgentSession(user_id=user_id, ticket_id=t.id)
+        db.add(sess)
+        db.flush()
+        start = t.status if t.status == States.WAITING_USER_CONFIRM else None
+        ctx = AgentContext(session_id=sess.id, ticket_id=t.id, user_id=user_id,
+                           message=message, order_id=t.order_id, state=start)
+        decision = agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
+        t.status = ctx.state          # 模拟 runner 末尾 ticket.status = ctx.state
+        db.flush()
+        return decision, ctx
+
+    return send, t
+
+
 # ---------- 退款 ----------
-def test_refund_low_risk_auto_draft(db, user_order):
-    u, o = user_order   # 普通 paid 订单，金额 100
-    decision, ctx = _run(db, u.id, "我要退款，不想要了", order_id=o.id)
-    assert ctx.intent == "refund_request" and ctx.skill == "refund_handling"
-    assert ctx.state == States.RESOLVED_BY_AGENT
+def test_refund_low_risk_two_step_confirm(db, user_order):
+    """低风险退款两步：先待确认（不建草稿）→ 确认后才建草稿（Step2）。"""
+    u, o = user_order
+    send, t = _convo(db, u.id, order_id=o.id)
+    _, c1 = send("我要退款，不想要了")
+    assert c1.intent == "refund_request" and c1.state == States.WAITING_USER_CONFIRM
+    assert db.query(RefundRequest).count() == 0               # 待确认，未建草稿
+    assert t.pending_action and t.pending_action["type"] == "refund_request"
+    d2, c2 = send("确认，帮我退吧")
+    assert c2.state == States.RESOLVED_BY_AGENT
     rr = db.query(RefundRequest).one()
     assert rr.status == "draft" and rr.require_human_approval is False
-    assert "退款" in decision.reply
+    assert t.pending_action is None                           # 已清
+    assert "退款" in d2.reply
 
 
 def test_refund_high_amount_to_human(db, user_order):
@@ -64,15 +92,57 @@ def test_refund_not_owner_to_human(db, user_order):
     assert db.query(RefundRequest).count() == 0
 
 
-def test_refund_no_duplicate_draft_same_order(db, user_order):
-    """会话级幂等（#8）：同订单已有进行中退款 → 换措辞再触发不重复建草稿。"""
+def test_refund_no_duplicate_after_confirm(db, user_order):
+    """确认建草稿后，再次请求同订单 → 会话级幂等，不重复建（#8）。"""
     u, o = user_order
-    _run(db, u.id, "我要退款，不想要了", order_id=o.id)
-    d2, ctx2 = _run(db, u.id, "我还是要退款", order_id=o.id)        # 换措辞
-    d3, _ = _run(db, u.id, "我刚才退款的订单号是多少", order_id=o.id)  # 追问也被误判退款
-    assert db.query(RefundRequest).count() == 1                      # 仍只有一条草稿
-    assert "处理中" in d2.reply and ctx2.state == States.RESOLVED_BY_AGENT
-    assert "处理中" in d3.reply
+    send, _ = _convo(db, u.id, order_id=o.id)
+    send("我要退款")
+    send("确认")                                    # 建草稿 #1
+    assert db.query(RefundRequest).count() == 1
+    d, _ = send("我还是要退款")                      # 再请求 → 已在处理中
+    assert db.query(RefundRequest).count() == 1
+    assert "处理中" in d.reply
+
+
+def test_cancel_pending_refund(db, user_order):
+    """待确认阶段说'算了不退了' → 取消待确认动作，未提交。"""
+    u, o = user_order
+    send, t = _convo(db, u.id, order_id=o.id)
+    send("我要退款")                                 # → 待确认
+    d, _ = send("算了不退了")
+    assert db.query(RefundRequest).count() == 0
+    assert t.pending_action is None
+    assert "取消" in d.reply
+
+
+def test_cancel_built_draft(db, user_order):
+    """已建草稿后'取消退款' → 撤销草稿(cancelled)。"""
+    u, o = user_order
+    send, _ = _convo(db, u.id, order_id=o.id)
+    send("我要退款")
+    send("确认")
+    d, _ = send("取消退款")
+    rr = db.query(RefundRequest).one()
+    assert rr.status == "cancelled"
+    assert "撤销" in d.reply
+
+
+def test_bare_confirm_without_context_clarifies(db, user_order):
+    """无待确认上下文时'确认' → 低置信澄清，不误执行。"""
+    u, o = user_order
+    send, _ = _convo(db, u.id, order_id=o.id)
+    _, c = send("确认")
+    assert c.state == States.INFO_REQUIRED
+    assert db.query(RefundRequest).count() == 0
+
+
+def test_refund_inquiry_no_write(db, user_order):
+    """'能退款吗' → 咨询，只读答疑不建草稿。"""
+    u, o = user_order
+    send, _ = _convo(db, u.id, order_id=o.id)
+    _, c = send("能退款吗")
+    assert c.intent == "refund_inquiry"
+    assert db.query(RefundRequest).count() == 0
 
 
 def test_refund_negation_does_not_create_draft(db, user_order):

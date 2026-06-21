@@ -37,8 +37,8 @@ def _load_history(db: Session, ticket_id: int, before_id: int) -> list[Msg]:
 
 
 def task_status_for(state: str) -> str:
-    if state == States.INFO_REQUIRED:
-        return "waiting_user_input"
+    if state in (States.INFO_REQUIRED, States.WAITING_USER_CONFIRM):
+        return "waiting_user_input"   # 等待用户补信息/确认
     if state == States.NEED_HUMAN:
         return "need_human"
     return "completed"
@@ -73,9 +73,12 @@ def run_agent_session(db: Session, session_id: int, agent=None,
             from app.llm.registry import build_llm_client
             agent = build_default_agent(build_llm_client())
 
+        # 跨轮状态：仅"等待确认"态需续接（其余 new message 视为新请求，从 CREATED 起）
+        start_state = (States.WAITING_USER_CONFIRM
+                       if ticket.status == States.WAITING_USER_CONFIRM else None)
         ctx = AgentContext(session_id=sess.id, ticket_id=sess.ticket_id,
                            user_id=sess.user_id, message=msg.content,
-                           order_id=ticket.order_id,
+                           order_id=ticket.order_id, state=start_state,
                            history=_load_history(db, sess.ticket_id, msg.id))
         decision = agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
 

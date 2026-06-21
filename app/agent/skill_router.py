@@ -20,9 +20,10 @@ class SkillRouter:
         self._skills.append(skill)
 
     def route(self, intent: str) -> Skill:
+        iv = getattr(intent, "value", intent)
         for skill in self._skills:
             if intent in skill.triggers:
-                logger.info("route intent=%s -> skill=%s", intent, skill.name)
+                logger.info("route intent=%s -> skill=%s", iv, skill.name)
                 return skill
-        logger.info("route intent=%s -> skill=%s(default)", intent, self._default.name)
+        logger.info("route intent=%s -> skill=%s(default)", iv, self._default.name)
         return self._default
