@@ -56,6 +56,7 @@ export interface SendMessageRequest {
   userId: string;
   content: string;
   clientMessageId: string;
+  ticketId?: string;        // 多轮对话：带同一工单 id 续接上下文（P1 对话记忆）
 }
 
 export interface SendMessageResponse {

@@ -1,16 +1,27 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
-import { CircleCheck, Clock, Cpu, Message, RefreshRight, Warning } from "@element-plus/icons-vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { CircleCheck, Clock, Cpu, Message, Plus, RefreshRight, Warning } from "@element-plus/icons-vue";
 import { api } from "../api/client";
 import type { AgentTimelineStep, ChatSession, TaskStatus } from "../api/types";
 
 const userId = ref("11");   // seed 的 demo 用户；订单号见 seed_data 对照表
 const input = ref("我要退款 订单 DEMO-REFUND-LOW");
 const session = ref<ChatSession | null>(null);
+const ticketId = ref<string | undefined>(undefined);   // 同一对话续接的工单 id（P1 对话记忆）
 const loading = ref(false);
 const sending = ref(false);
 const error = ref("");
 let pollTimer: number | undefined;
+
+// 新对话：丢弃当前工单与会话，下一条消息会新建工单
+function newConversation() {
+  stopPoll();
+  ticketId.value = undefined;
+  session.value = null;
+  error.value = "";
+}
+// 切换用户时重置对话（工单归属某用户，避免跨用户复用）
+watch(userId, newConversation);
 
 const statusMeta: Record<TaskStatus, { label: string; type: "info" | "warning" | "success" | "danger"; text: string }> = {
   queued: { label: "queued", type: "info", text: "排队中" },
@@ -64,8 +75,11 @@ async function submitMessage() {
     const response = await api.sendMessage({
       userId: userId.value,
       content,
-      clientMessageId: `web-${Date.now()}`
+      clientMessageId: `web-${Date.now()}`,
+      ticketId: ticketId.value          // 第二条起带上工单 id，后端续接上下文
     });
+    ticketId.value = response.ticketId ?? ticketId.value;   // 记住工单，供下一轮续接
+    input.value = "";
     await refreshSession(response.sessionId);
   } catch (err) {
     error.value = err instanceof Error ? err.message : "发送失败";
@@ -84,6 +98,7 @@ onBeforeUnmount(stopPoll);
         <p class="eyebrow">用户端 /chat</p>
         <h1>售后对话</h1>
       </div>
+      <el-button :icon="Plus" plain size="small" @click="newConversation">新对话</el-button>
       <div class="status-strip" v-if="session">
         <el-tag :type="statusMeta[session.taskStatus].type" effect="dark">
           {{ statusMeta[session.taskStatus].text }}
