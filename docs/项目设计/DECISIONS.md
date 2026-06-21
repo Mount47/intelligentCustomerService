@@ -89,3 +89,12 @@
 - 会话视图升级为完整 `ChatSession`（messages + steps 时间线 + toolCalls + tokenUsage）。
 - 新增 admin 查询接口：`/api/admin/{metrics,tickets,tickets/{id},sessions,sessions/{id}}`；metrics 对齐 `AdminMetrics` 并附削峰超集字段。
 **为什么**：前端是消费方且已成型，camelCase 是 JS 惯例；后端服务于前端契约、零前端改动最省事。受影响的后端测试同步改 camelCase 键。
+
+## ADR-14 · 2026-06-21 · 数据库分层：sqlite 开发 / Postgres 并发验证与生产；不引 MySQL
+**决策**：按场景分三层用库，**代码全走 SQLAlchemy 无原生 SQL，切库只改 `DATABASE_URL`**：
+- **开发 / demo**：文件 sqlite（`.env` 的 `sqlite:///./_demo.db`）——零依赖、可移植、快。
+- **评测 / 单测**：内存 sqlite（`run_eval.py` 的 `sqlite://` + StaticPool）——纯净隔离、跑完即丢。
+- **并发幂等硬验 / 生产**：Postgres（`config.py` 默认值 + `deploy/docker-compose.yml` 的 `postgres:16`；驱动 `psycopg`）。
+- **不引 MySQL**：项目走 PG 路线（为将来向量 RAG 留 pgvector 后路）；再加 MySQL 是无谓的方言/运维负担。
+**为什么**：sqlite 写操作全局串行锁，**无法真并发**——而退款第三层幂等（DB 唯一约束 + IntegrityError 回查）只有在多事务真正抢插时才触发。故招牌的并发幂等**必须在 PG 上实测**（`TEST_DATABASE_URL=postgres` 跑 `test_concurrency.py` 8 线程 barrier），sqlite 仅验顺序逻辑。开发期用 sqlite 是务实的便利取舍，不是降级；生产/硬验切 PG 仅一行配置之差，可移植性本身即设计收益。
+**现状**：PG 端到端（docker compose 真实拉起 + 真并发）尚未实测，列为待补——这是把"逻辑已验"升级到"实测已验"的关键一步。

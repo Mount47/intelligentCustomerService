@@ -8,8 +8,38 @@
 
 ---
 
+## 🧭 新会话开局清单（按序读，30 秒进入状态）
+1. **本文件「当前阶段 / 下一步 / 已知坑」** —— 做到哪、接着干啥。
+2. **`01-总体设计.md`** —— 架构 + Agent 执行链路契约(§5)/状态机(§7)/表(§8)/三层幂等(§9)/guardrails(§11)。
+3. **`DECISIONS.md`** —— 13+ 条 ADR，每个决策的"为什么"。
+4. **`../项目运行/运行手册.md`** —— 怎么跑/配置/排查、回答不准去哪改。
+5. **`git log --oneline`** —— 客观进度。
+> 真值优先级：**代码+测试 > git log > 文档**，对不上信代码。
+> 铁规：①LLM provider 可插拔、模型走 `.env` ②harness 统一跑 ReAct loop，Skill 声明式、写操作由 finalize 确定性执行 ③退款三层幂等 ④**docs/ 不自动提交** ⑤每里程碑测试过后只提交代码。
+
+---
+
 ## 当前阶段
-**M9 完成** — 退款并发幂等硬验 + tracing，54 passed（并发测试 5/5 稳定）。
+**P1 对话记忆 完成** — runner 加载工单历史进 ctx.history，前端串 ticketId 续接，74 passed。
+> 已用百炼 qwen-plus 跑通真实端到端 + --real 评测（intent 0.971/工具 1.0/对抗全拦）。
+> 注：docs/ 不自动提交（用户要求）；STATUS 仍在工作区维护。
+
+## 本会话新增（已提交代码，docs 留工作区）
+- **评测·LLM-as-Judge 第二层**：`app/eval/judge.py`（盲评 + 参考答案锚定 + rubric 四维 + JSON 容错；StubJudge 确定性/LLMJudge 真实）；run_eval `--judge-real`；metrics 汇总 judge 维度；oos-1 改判 + `accept_intents`
+- **前端打通**：修 `client.ts` dev 强制 mock 的 bug（显式 `VITE_USE_MOCK=false` 现可连真后端）；`.env.local` 直连 8000；运行手册 2.4 更新；CORS 实测通过
+- **P1 对话记忆**：`runner._load_history`（窗口 20，role 映射）；`SendMessageRequest.ticketId` + ChatView 串 ticketId/「新对话」按钮；`tests/test_memory.py`
+- **记忆分层设计**（DECISIONS 待补 ADR）：客观事实查库(读)/偏好·摘要确定性抽取(写)/冲突信 DB；P1 短期已落，P2 事实接地/P3 偏好/P4 情景摘要/P5 向量 待做
+
+## 加固计划（让项目更 solid/可用，按 ROI）
+1. ✅ 真实成本折算（pricing.py + TokenAcct，缓存读打折，stub→0）
+2. ✅ Worker 健壮性（failed/timeout 分标 + retry_count + celery 重抛重试，线程/测试不崩）
+3. ✅ 订单可用性（chat_service.resolve_order_from_text：文本提取订单号/id 校验归属；多轮补 ticket.order_id；前端示例对齐 seed）
+4. ✅ 真实 LLM 端到端（百炼 qwen-plus）+ --real 评测（含 LLM-as-Judge 第二层）
+5. ⬜ P2 事实接地（order_query 主动查 get_user_orders）/ P3 偏好 / P4 情景摘要
+6. ⬜ Agent 上下文注入（order_id/user_id 进 system，修工具调用 FAILED；见根因分析）
+7. ⬜ 可选：向量 RAG / 质检 Skill / SLA 监控(sla_records 只写不查) / Alembic / 删 quality_reviews 空表
+
+## 上个完成项（M9）
 
 ## 上个完成项（M9）
 - **并发幂等硬验**：`tests/test_concurrency.py` 8 线程 barrier 同发同一退款 → 断言只成一条 + 全拿同一 id + 仅一个 created（其余走 IntegrityError 回查/dedup）。默认文件 sqlite 验逻辑，`TEST_DATABASE_URL=postgres` 跑真并发
