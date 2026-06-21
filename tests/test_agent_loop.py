@@ -3,7 +3,7 @@
 用脚本化假 LLM（按序返回 tool_use → end_turn），验证工具被执行、结果回灌、记录落库、
 token 跨轮累计、白名单外工具被拒。
 """
-from app.agent.agent_core import AgentCore
+from app.agent.agent_core import AgentCore, _context_note
 from app.agent.context import AgentContext, Decision, SkillPlan
 from app.agent.guardrails import Guardrails
 from app.agent.intent_classifier import HybridIntentClassifier
@@ -48,6 +48,38 @@ def _agent(llm):
         state_machine=StateMachine(), guardrails=Guardrails(),
         tool_registry=build_tool_registry(),
     )
+
+
+def test_context_note_includes_known_ids():
+    ctx = AgentContext(session_id=1, ticket_id=1, user_id=11, message="x", order_id=51)
+    note = _context_note(ctx)
+    assert "user_id=11" in note and "order_id=51" in note
+    # 无订单时只给 user_id
+    note2 = _context_note(AgentContext(session_id=1, ticket_id=1, user_id=7, message="x"))
+    assert "user_id=7" in note2 and "order_id" not in note2
+
+
+def test_context_injected_into_system_prompt(db, user_order):
+    """#5：loop 调 LLM 的 system 提示应带上已知 order_id/user_id（供工具填参）。"""
+    u, o = user_order
+    sess = AgentSession(user_id=u.id)
+    db.add(sess)
+    db.flush()
+    captured = {}
+
+    class CapLLM:
+        model_name = "cap"
+
+        def chat(self, *, system, messages, tools=None, stream=False):
+            captured["system"] = system
+            return LLMResponse(text="ok", stop_reason="end_turn", usage=Usage(1, 1, 0, 2))
+
+    agent = _agent(CapLLM())
+    ctx = AgentContext(session_id=sess.id, ticket_id=1, user_id=u.id,
+                       message="查我的订单", order_id=o.id)
+    agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
+    assert f"order_id={o.id}" in captured["system"]
+    assert f"user_id={u.id}" in captured["system"]
 
 
 def test_loop_executes_tool_and_feeds_back(db, user_order):

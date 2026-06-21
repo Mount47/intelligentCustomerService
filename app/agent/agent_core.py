@@ -83,9 +83,11 @@ class AgentCore:
             specs = self.tools.specs(plan.allowed_tools)
         allowed = set(plan.allowed_tools or [])
         messages = list(ctx.history) + [Msg(role="user", content=ctx.message)]
+        # 上下文注入（#5）：把已知 order_id/user_id 给 LLM，调工具时填对参数、不瞎猜
+        system = plan.system_prompt + _context_note(ctx)
 
         for _ in range(max(1, plan.max_iterations)):
-            resp = self.llm.chat(system=plan.system_prompt, messages=messages, tools=specs)
+            resp = self.llm.chat(system=system, messages=messages, tools=specs)
             ctx.token_acct.add(resp.usage, self.llm.model_name)
 
             if resp.stop_reason == "tool_use" and resp.tool_calls:
@@ -123,6 +125,18 @@ class AgentCore:
         result, record = self.tools.execute(tool_ctx, tc.name, tc.arguments)
         ctx.tool_call_records.append(record)
         return result
+
+
+def _context_note(ctx: AgentContext) -> str:
+    """把后端已知的标识拼进系统提示，供 LLM 调工具时填参（#5 上下文注入）。
+
+    退款决策仍由 finalize 用 ctx 真值确定性执行；这里只是让 loop 内的只读工具调用
+    填对 order_id/user_id、避免瞎猜导致 FAILED，并让 LLM 的解释有据可依。
+    """
+    parts = [f"user_id={ctx.user_id}"]
+    if ctx.order_id is not None:
+        parts.append(f"本次咨询订单 order_id={ctx.order_id}")
+    return "\n\n【当前上下文】" + "；".join(parts) + "（调用工具需要 id 时用这些值，勿编造）"
 
 
 def build_default_agent(llm: LLMClient | None = None, tool_registry=None) -> AgentCore:
