@@ -71,6 +71,15 @@ def test_bare_confirmation_without_context_is_not_confirmation():
     assert r.confidence == Confidence.LOW
 
 
+def test_uncertain_not_confirmation_in_waiting_state():
+    # "不确定"含"确定"子串，但是迟疑/否定，绝不能当确认（截图实测 bug）
+    r = clf.classify_intent("不确定", state=States.WAITING_USER_CONFIRM)
+    assert r.intent != Intents.REFUND_CONFIRMATION
+    # 同类伪确认
+    for t in ("不可以", "不对", "不行"):
+        assert clf.classify_intent(t, state=States.WAITING_USER_CONFIRM).intent != Intents.REFUND_CONFIRMATION
+
+
 def test_intents_is_str_enum_backward_compatible():
     # str-Enum：与字符串比较/集合成员仍成立（不破坏既有代码）
     assert Intents.REFUND_REQUEST == "refund_request"

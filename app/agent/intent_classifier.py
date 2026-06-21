@@ -88,6 +88,12 @@ _INTERROGATIVE = ("吗", "嘛", "呢", "?", "？", "要不要", "能不能", "�
 # A-不-A 疑问句式（如"要不要"）：内含的否定字样是疑问的一部分，不应判为否定
 _DELIBERATION = ("要不要", "能不能", "可不可以", "是不是", "退不退", "用不用", "需不需要")
 _CONFIRMATION = ("确认", "确定", "是的", "好的", "可以", "对", "嗯", "退吧", "帮我退", "就这样")
+# "伪确认"：字面含确认字样但实为否定/迟疑（"不确定"含"确定"），不可当确认
+_NEGATED_CONFIRM = ("不确定", "不可以", "不行", "不对", "不好", "不一定", "再想想", "没想好", "说不好")
+
+
+def _is_confirm(text: str) -> bool:
+    return _has(text, _CONFIRMATION) and not _has(text, _NEGATED_CONFIRM)
 
 _REFUND_FAMILY = {Intents.REFUND_REQUEST, Intents.RETURN_REQUEST}
 
@@ -140,7 +146,7 @@ class HybridIntentClassifier:
             if is_neg:
                 return IntentResult(Intents.CANCEL_REFUND, Polarity.NEGATIVE, ActionType.CANCEL,
                                     Confidence.HIGH, False, "等待确认态下的否定→取消退款")
-            if _has(text, _CONFIRMATION):
+            if _is_confirm(text):
                 return IntentResult(Intents.REFUND_CONFIRMATION, Polarity.POSITIVE, ActionType.CONFIRM,
                                     Confidence.HIGH, False, "等待确认态下的确认表达")
 
@@ -164,7 +170,7 @@ class HybridIntentClassifier:
                                 Confidence.HIGH, False, "规则命中")
 
         # 召回未命中
-        if _has(text, _CONFIRMATION):   # 无上下文的"确认" → 意图不明，需澄清（不算确认）
+        if _is_confirm(text):   # 无上下文的"确认" → 意图不明，需澄清（不算确认）
             return IntentResult(Intents.GENERAL_POLICY_QUERY, Polarity.NEUTRAL, ActionType.NONE,
                                 Confidence.LOW, False, "无上下文的确认表达，意图不明需澄清")
         if self.llm is not None:

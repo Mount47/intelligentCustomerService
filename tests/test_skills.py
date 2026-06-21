@@ -136,6 +136,17 @@ def test_bare_confirm_without_context_clarifies(db, user_order):
     assert db.query(RefundRequest).count() == 0
 
 
+def test_uncertain_in_confirm_does_not_execute(db, user_order):
+    """待确认时回复'不确定' → 不建草稿、保持等待（截图实测 bug）。"""
+    u, o = user_order
+    send, _ = _convo(db, u.id, order_id=o.id)
+    send("我要退款")                         # → 待确认
+    d, c = send("不确定")
+    assert db.query(RefundRequest).count() == 0
+    assert c.state == States.WAITING_USER_CONFIRM   # 重新提示，仍等待
+    assert "确认" in d.reply or "取消" in d.reply
+
+
 def test_refund_inquiry_no_write(db, user_order):
     """'能退款吗' → 咨询，只读答疑不建草稿。"""
     u, o = user_order
