@@ -70,8 +70,12 @@ class IntentResult:
 _KEYWORDS: list[tuple[Intents, tuple[str, ...]]] = [
     (Intents.HUMAN_HANDOFF, ("人工", "转人工", "客服", "投诉到底")),
     (Intents.PRODUCT_COMPLAINT, ("投诉", "质量问题", "坏了", "破损", "假货")),
-    (Intents.RETURN_REQUEST, ("退货", "退回", "寄回")),
-    (Intents.REFUND_REQUEST, ("退款", "退钱", "退费", "申请退")),
+    (Intents.REFUND_REQUEST, ("退款", "退钱", "退费", "申请退")),   # 退款精确（先于退货广召回）
+    (Intents.RETURN_REQUEST, ("退货", "退回", "寄回")),             # 退货精确
+    # 退-口语广召回：覆盖"退衣服/退这个/退我的订单"等口语说法，并抢在 order_query 前
+    # （修退款召回：漏召回 + 被订单查询抢占。长尾仍靠后续语义层 LLM-defer）
+    (Intents.RETURN_REQUEST, ("想退", "要退", "帮我退", "退掉", "退一下", "退一件",
+                              "退这", "退那", "退我的", "退商品", "退东西", "退衣", "退鞋", "退订单")),
     (Intents.LOGISTICS_EXCEPTION, ("没收到", "未收到", "丢件", "物流异常", "不动了", "催")),
     (Intents.LOGISTICS_QUERY, ("物流", "快递", "到哪", "发货", "运单", "单号")),
     (Intents.INVOICE_REQUEST, ("发票", "开票", "税号", "抬头")),

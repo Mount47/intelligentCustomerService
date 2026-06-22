@@ -85,6 +85,17 @@ def test_uncertain_not_confirmation():
         assert parse_confirmation(t) == ConfirmSignal.UNCLEAR
 
 
+def test_colloquial_refund_recall():
+    """口语化退款/退货要召回到退款技能；'退X订单'不被订单查询抢走（修退款召回）。"""
+    for m in ("我想退一件衣服", "我想退这件衣服", "我想退我的订单", "我买的衣服想退", "退一下订单"):
+        r = clf.classify_intent(m)
+        assert r.intent in (Intents.REFUND_REQUEST, Intents.RETURN_REQUEST), f"{m} -> {r.intent.value}"
+    # 退款精确词仍优先判 refund，不被广召回抢成 return
+    assert clf.classify_intent("我要退款").intent == Intents.REFUND_REQUEST
+    # 纯查询不被误召回为退款
+    assert clf.classify_intent("帮我查下我的订单").intent == Intents.ORDER_QUERY
+
+
 def test_intents_is_str_enum_backward_compatible():
     # str-Enum：与字符串比较/集合成员仍成立（不破坏既有代码）
     assert Intents.REFUND_REQUEST == "refund_request"
