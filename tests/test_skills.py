@@ -220,6 +220,17 @@ def test_logistics_stale_creates_urge_ticket(db, user_order):
     assert "催件" in decision.reply
 
 
+def test_logistics_urge_ticket_dedup(db, user_order):
+    """同一异常订单反复问 → 催件工单只建一张（会话级去重，#8 对称）。"""
+    u, _ = user_order
+    o = make_order(db, u.id, status="shipped")
+    _add_logistics(db, o.id, "in_transit", hours_ago=60)
+    _run(db, u.id, "我的快递怎么还没动", order_id=o.id)
+    d2, _ = _run(db, u.id, "我的快递到哪了", order_id=o.id)   # 再问一次
+    assert db.query(Ticket).filter_by(category="logistics", order_id=o.id).count() == 1
+    assert "处理中" in d2.reply
+
+
 def test_logistics_delivered_not_received_to_human(db, user_order):
     u, _ = user_order
     o = make_order(db, u.id, status="delivered", delivered_days_ago=1)

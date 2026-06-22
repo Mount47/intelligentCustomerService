@@ -1,6 +1,7 @@
 """工单业务逻辑。状态变更必须经状态机校验（§7），不在此散落判断。"""
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.state_machine import StateMachine, States
@@ -9,6 +10,21 @@ from app.db.models import Ticket, TicketMessage
 from app.services import sla_service
 
 _sm = StateMachine()
+
+# 终态：不算"进行中"。其余视为进行中（去重用）
+_CLOSED_STATES = (States.CLOSED, States.REJECTED, States.RESOLVED_BY_HUMAN)
+
+
+def get_open_ticket(db: Session, user_id: int, order_id: int, category: str) -> Ticket | None:
+    """该用户该订单是否已有进行中的某类工单（去重用：防同订单反复建催件单）。"""
+    return db.scalar(
+        select(Ticket).where(
+            Ticket.user_id == user_id,
+            Ticket.order_id == order_id,
+            Ticket.category == category,
+            Ticket.status.notin_(_CLOSED_STATES),
+        ).order_by(Ticket.id.desc())
+    )
 
 
 def create_ticket(

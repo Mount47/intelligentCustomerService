@@ -46,8 +46,13 @@ class LogisticsExceptionSkill:
                             States.NEED_HUMAN, need_handoff=True,
                             handoff_reason="delivered_not_received")
 
-        # 异常 / 48h 无更新 → 催件工单
+        # 异常 / 48h 无更新 → 催件工单（会话级去重：同订单已有进行中催件单则不重复建）
         if exc.get("is_exception"):
+            existing = ticket_service.get_open_ticket(db, ctx.user_id, ctx.order_id, "logistics")
+            if existing is not None:
+                return Decision(
+                    f"该订单的催件工单（#{existing.id}）已在处理中，物流专员会尽快跟进，无需重复提交。",
+                    States.RESOLVED_BY_AGENT)
             t = ticket_service.create_ticket(
                 db, ctx.user_id, "logistics", priority="high", order_id=ctx.order_id)
             reason = exc.get("exception_reason") or "长时间无更新"
