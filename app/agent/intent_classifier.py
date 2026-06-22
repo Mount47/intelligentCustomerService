@@ -165,8 +165,8 @@ class HybridIntentClassifier:
                 return picked, False
         return intent, False
 
-    # ---- 新：结构化意图（关键词召回 → 极性 → 决策） ----
-    def classify_intent(self, message: str, state: str | None = None) -> IntentResult:
+    # ---- 新：结构化意图（关键词召回 → 极性 → 决策；召回不确定时带历史 defer LLM） ----
+    def classify_intent(self, message: str, history=None) -> IntentResult:
         text = (message or "").lower().strip()
         is_q = _has(text, _INTERROGATIVE)
         # A-不-A 疑问（要不要/退不退…）里的"不要/不退"是疑问的一部分，不算否定
@@ -199,24 +199,26 @@ class HybridIntentClassifier:
         if _is_confirm(text):   # 无上下文的"确认" → 意图不明，需澄清（不算确认）
             return IntentResult(Intents.GENERAL_POLICY_QUERY, Polarity.NEUTRAL, ActionType.NONE,
                                 Confidence.LOW, False, "无上下文的确认表达，意图不明需澄清")
+        # 召回未命中 → 语义层兜底：带对话历史让 LLM 判（多轮上下文，步骤④起步）
         if self.llm is not None:
-            picked = self._classify_llm(text)
+            picked = self._classify_llm(text, history)
             if picked:
                 logger.info("intent(llm)=%s", picked.value)
                 return IntentResult(picked, Polarity.NEUTRAL, ActionType.NONE,
-                                    Confidence.MEDIUM, False, "LLM 兜底")
-        # 召回未命中：按通用咨询兜底（MEDIUM，可答疑）；真正 LOW 只留给无上下文的"确认"等歧义
+                                    Confidence.MEDIUM, False, "LLM 语义兜底（带历史）")
+        # 无 LLM/判不出：按通用咨询兜底（MEDIUM，可答疑）；LOW 只留给无上下文的"确认"
         return IntentResult(Intents.GENERAL_POLICY_QUERY, Polarity.NEUTRAL, ActionType.NONE,
                             Confidence.MEDIUM, False, "规则未命中，按通用咨询兜底")
 
-    def _classify_llm(self, message: str) -> Intents | None:
+    def _classify_llm(self, message: str, history=None) -> Intents | None:
         from app.llm.base import Msg
         system = (
-            "你是售后意图分类器。从下列意图中选最匹配的一个，"
+            "你是售后意图分类器。结合对话历史，判断用户【最后一句】最匹配下列哪个意图，"
             "只输出英文标识本身，不要解释：\n" + ", ".join(i.value for i in ALL_INTENTS)
         )
+        messages = list(history or []) + [Msg("user", message)]
         try:
-            resp = self.llm.chat(system=system, messages=[Msg("user", message)])
+            resp = self.llm.chat(system=system, messages=messages)
         except Exception:  # noqa: BLE001 — 分类失败不阻断主流程
             return None
         text = (resp.text or "").strip().lower()

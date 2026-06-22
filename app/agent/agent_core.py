@@ -65,8 +65,8 @@ class AgentCore:
         if ctx.state == States.WAITING_USER_CONFIRM:
             return self._handle_confirm(ctx, tool_ctx)
 
-        # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult）
-        intent_result = self.classifier.classify_intent(ctx.message)
+        # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult；召回不确定时带历史 defer LLM）
+        intent_result = self.classifier.classify_intent(ctx.message, history=ctx.history)
         ctx.intent = intent_result.intent.value
         ctx.intent_result = intent_result
         ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)

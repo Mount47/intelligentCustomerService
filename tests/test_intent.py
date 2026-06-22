@@ -96,6 +96,29 @@ def test_colloquial_refund_recall():
     assert clf.classify_intent("帮我查下我的订单").intent == Intents.ORDER_QUERY
 
 
+def test_llm_defer_uses_history_on_recall_miss():
+    """步骤④：规则召回不到 → 带对话历史 defer LLM 判意图（多轮语义）。"""
+    from app.llm.base import LLMResponse, Msg, Usage
+
+    captured = {}
+
+    class FakeLLM:
+        model_name = "fake"
+
+        def chat(self, *, system, messages, tools=None, stream=False):
+            captured["messages"] = messages
+            return LLMResponse(text="return_request", stop_reason="end_turn", usage=Usage())
+
+    clf2 = HybridIntentClassifier(llm=FakeLLM())
+    hist = [Msg("user", "我买了件衣服"), Msg("assistant", "好的")]
+    r = clf2.classify_intent("这个我用不上了想处理掉", history=hist)   # 无关键词→miss→defer
+    assert r.intent == Intents.RETURN_REQUEST
+    assert r.reason.startswith("LLM 语义兜底")
+    # 历史被带上 + 当前消息在最后
+    assert captured["messages"][0].content == "我买了件衣服"
+    assert captured["messages"][-1].content.endswith("处理掉")
+
+
 def test_intents_is_str_enum_backward_compatible():
     # str-Enum：与字符串比较/集合成员仍成立（不破坏既有代码）
     assert Intents.REFUND_REQUEST == "refund_request"
