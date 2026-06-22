@@ -136,6 +136,15 @@ def test_bare_confirm_without_context_clarifies(db, user_order):
     assert db.query(RefundRequest).count() == 0
 
 
+def test_out_of_scope_hard_reply(db, user_order):
+    """超范围(天气)→scope 硬闸固定拒答，不进业务技能、不建任何东西。"""
+    u, _ = user_order
+    d, c = _run(db, u.id, "今天天气怎么样")
+    assert c.intent == "out_of_scope"
+    assert c.state == States.RESOLVED_BY_AGENT
+    assert "售后" in d.reply and "范围" in d.reply
+
+
 def test_uncertain_in_confirm_does_not_execute(db, user_order):
     """待确认时回复'不确定' → 不建草稿、保持等待（截图实测 bug）。"""
     u, o = user_order

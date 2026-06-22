@@ -90,6 +90,9 @@ _DELIBERATION = ("要不要", "能不能", "可不可以", "是不是", "退不�
 _CONFIRMATION = ("确认", "确定", "是的", "好的", "可以", "对", "嗯", "退吧", "帮我退", "就这样")
 # "伪确认"：字面含确认字样但实为否定/迟疑（"不确定"含"确定"），不可当确认
 _NEGATED_CONFIRM = ("不确定", "不可以", "不行", "不对", "不好", "不一定", "再想想", "没想好", "说不好")
+# 明确超出售后范围的线索（P0 scope 硬闸：命中→固定拒答，不跑业务 LLM）
+_OUT_OF_SCOPE_CUES = ("天气", "几点", "星期几", "笑话", "写诗", "唱歌", "股票", "新闻",
+                      "翻译", "数学", "你是谁", "你叫", "陪我聊", "讲个", "故事", "怎么做菜")
 
 
 def _is_confirm(text: str) -> bool:
@@ -100,6 +103,30 @@ _REFUND_FAMILY = {Intents.REFUND_REQUEST, Intents.RETURN_REQUEST}
 
 def _has(text: str, cues: tuple[str, ...]) -> bool:
     return any(c in text for c in cues)
+
+
+# ── 确认态专用 parser（P0）：高危确认门只认强确认/强取消，其余一律保持等待（fail-safe）──
+class ConfirmSignal(str, Enum):
+    CONFIRM = "confirm"
+    CANCEL = "cancel"
+    UNCLEAR = "unclear"
+
+
+_STRONG_CANCEL = ("取消", "不退", "不要退", "别退", "算了", "不用了", "不办了", "不想退")
+_STRONG_CONFIRM = ("确认", "确定要", "是的", "对，退", "可以退", "退吧", "帮我退", "就这样", "好的")
+_HESITATE = ("不确定", "不一定", "再想想", "没想好", "不好说", "说不好", "不可以", "不行", "不对")
+
+
+def parse_confirmation(text: str) -> ConfirmSignal:
+    """等待确认态下解析用户回复。否定/迟疑优先于确认，避免'不确定'被当确认。"""
+    t = (text or "").strip().lower()
+    if _has(t, _STRONG_CANCEL):
+        return ConfirmSignal.CANCEL
+    if _has(t, _HESITATE):          # 迟疑/伪确认 → 不执行，重新提示
+        return ConfirmSignal.UNCLEAR
+    if _has(t, _STRONG_CONFIRM):
+        return ConfirmSignal.CONFIRM
+    return ConfirmSignal.UNCLEAR
 
 
 class RuleIntentClassifier:
@@ -140,15 +167,7 @@ class HybridIntentClassifier:
         is_q = _has(text, _INTERROGATIVE)
         # A-不-A 疑问（要不要/退不退…）里的"不要/不退"是疑问的一部分，不算否定
         is_neg = _has(text, _NEGATION) and not _has(text, _DELIBERATION)
-
-        # 6. 退款确认：仅在等待确认态才识别
-        if state == States.WAITING_USER_CONFIRM:
-            if is_neg:
-                return IntentResult(Intents.CANCEL_REFUND, Polarity.NEGATIVE, ActionType.CANCEL,
-                                    Confidence.HIGH, False, "等待确认态下的否定→取消退款")
-            if _is_confirm(text):
-                return IntentResult(Intents.REFUND_CONFIRMATION, Polarity.POSITIVE, ActionType.CONFIRM,
-                                    Confidence.HIGH, False, "等待确认态下的确认表达")
+        # 注：等待确认态由 handle 用 parse_confirmation 专门处理，不走通用分类（P0）
 
         candidate, from_rule = self.rule.classify(text)
 
@@ -170,6 +189,9 @@ class HybridIntentClassifier:
                                 Confidence.HIGH, False, "规则命中")
 
         # 召回未命中
+        if _has(text, _OUT_OF_SCOPE_CUES):   # 明确超出售后范围（P0 scope 硬闸）
+            return IntentResult(Intents.OUT_OF_SCOPE, Polarity.NEUTRAL, ActionType.NONE,
+                                Confidence.HIGH, False, "明确超出售后服务范围")
         if _is_confirm(text):   # 无上下文的"确认" → 意图不明，需澄清（不算确认）
             return IntentResult(Intents.GENERAL_POLICY_QUERY, Polarity.NEUTRAL, ActionType.NONE,
                                 Confidence.LOW, False, "无上下文的确认表达，意图不明需澄清")

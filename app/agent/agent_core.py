@@ -10,7 +10,16 @@ from typing import TYPE_CHECKING
 
 from app.agent.context import AgentContext, Decision, ToolCallRecord
 from app.agent.guardrails import Guardrails
-from app.agent.intent_classifier import Confidence, HybridIntentClassifier, Intents
+from app.agent.intent_classifier import (
+    ActionType,
+    Confidence,
+    ConfirmSignal,
+    HybridIntentClassifier,
+    IntentResult,
+    Intents,
+    Polarity,
+    parse_confirmation,
+)
 from app.agent.skill_router import SkillRouter
 from app.agent.state_machine import StateMachine, States
 from app.core.logging import get_logger
@@ -21,6 +30,13 @@ if TYPE_CHECKING:
     from app.tools.base import ToolContext
 
 logger = get_logger(__name__)
+
+# P0 硬边界固定话术（确定性，不经 LLM 自由发挥）
+_OUT_OF_SCOPE_REPLY = (
+    "抱歉，这超出了我的售后服务范围。我可以帮您处理订单查询、退款退货、物流问题等"
+    "售后事务，请问有什么可以帮您？"
+)
+_CLARIFY_REPLY = "您是想查询订单、咨询退款政策，还是提交售后申请？请补充一下，我好为您处理。"
 
 
 class AgentCore:
@@ -45,24 +61,26 @@ class AgentCore:
         if ctx.state is None:
             ctx.state = States.CREATED
 
+        # 确认握手轮：用专用 parser 强约束（不走通用分类；fail-safe）
+        if ctx.state == States.WAITING_USER_CONFIRM:
+            return self._handle_confirm(ctx, tool_ctx)
+
         # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult）
-        intent_result = self.classifier.classify_intent(ctx.message, state=ctx.state)
+        intent_result = self.classifier.classify_intent(ctx.message)
         ctx.intent = intent_result.intent.value
         ctx.intent_result = intent_result
-        in_confirm = ctx.state == States.WAITING_USER_CONFIRM
+        ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)
 
-        if in_confirm:
-            # 确认握手轮：只接受 确认/取消；其余重新提示并保持等待（不误执行）
-            if intent_result.intent not in (Intents.REFUND_CONFIRMATION, Intents.CANCEL_REFUND):
-                return self._finish(ctx, Decision(
-                    "请回复『确认』以继续，或『取消』放弃本次申请。", States.WAITING_USER_CONFIRM))
-        else:
-            ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)
-            # 低置信澄清闸（路由前）：不进业务技能自由发挥，也不误执行写操作
-            if intent_result.confidence == Confidence.LOW:
-                return self._finish(ctx, Decision(
-                    "抱歉，我不太确定您的诉求——是要『提交退款』『取消退款』，还是『咨询退款政策』？请补充一下。",
-                    States.INFO_REQUIRED, required_info=["明确诉求"]))
+        # ① scope 硬闸：超范围 → 固定回复，短路（不跑业务 LLM/工具）
+        if intent_result.intent == Intents.OUT_OF_SCOPE:
+            ctx.skill = "general"
+            return self._finish(ctx, Decision(_OUT_OF_SCOPE_REPLY, States.RESOLVED_BY_AGENT))
+
+        # ③ 低置信澄清：不进业务技能、不自由发挥、不误执行
+        if intent_result.confidence == Confidence.LOW:
+            ctx.skill = "general"
+            return self._finish(ctx, Decision(_CLARIFY_REPLY, States.INFO_REQUIRED,
+                                              required_info=["明确诉求"]))
 
         # 5 路由 Skill；6 取 plan
         skill = self.router.route(intent_result.intent)
@@ -82,6 +100,28 @@ class AgentCore:
             # 8 Skill 据结果产出决策（可经 tool_ctx 执行确定性写操作）
             decision = skill.finalize(ctx, tool_ctx)
 
+        return self._finish(ctx, decision)
+
+    def _handle_confirm(self, ctx: AgentContext, tool_ctx: "ToolContext | None") -> Decision:
+        # ② 确认态强约束：强确认→执行 pending_action / 强取消→清理 / 其他→保持等待
+        sig = parse_confirmation(ctx.message)
+        if sig == ConfirmSignal.UNCLEAR:
+            ctx.intent, ctx.skill = Intents.REFUND_CONFIRMATION.value, "refund_handling"
+            return self._finish(ctx, Decision(
+                "请回复『确认』以继续，或『取消』放弃本次申请。", States.WAITING_USER_CONFIRM))
+        intent = (Intents.REFUND_CONFIRMATION if sig == ConfirmSignal.CONFIRM
+                  else Intents.CANCEL_REFUND)
+        ctx.intent = intent.value
+        ctx.intent_result = IntentResult(
+            intent,
+            Polarity.POSITIVE if sig == ConfirmSignal.CONFIRM else Polarity.NEGATIVE,
+            ActionType.CONFIRM if sig == ConfirmSignal.CONFIRM else ActionType.CANCEL,
+            Confidence.HIGH, False, f"确认态 parser: {sig.value}")
+        skill = self.router.route(intent)
+        ctx.skill = skill.name
+        plan = skill.plan(ctx)
+        self._run_loop(ctx, plan, tool_ctx)
+        decision = skill.finalize(ctx, tool_ctx)
         return self._finish(ctx, decision)
 
     def _finish(self, ctx: AgentContext, decision: Decision) -> Decision:

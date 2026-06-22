@@ -6,12 +6,13 @@
 from app.agent.intent_classifier import (
     ActionType,
     Confidence,
+    ConfirmSignal,
     HybridIntentClassifier,
     IntentResult,
     Intents,
     Polarity,
+    parse_confirmation,
 )
-from app.agent.state_machine import States
 
 clf = HybridIntentClassifier()   # 无 llm：测确定性规则+极性路径
 
@@ -57,11 +58,18 @@ def test_affirmative_refund_is_request_requires_confirm():
     assert r.requires_confirmation is True
 
 
-def test_confirmation_only_in_waiting_state():
-    # 确认，帮我退吧 + 等待确认态 → refund_confirmation
-    r = clf.classify_intent("确认，帮我退吧", state=States.WAITING_USER_CONFIRM)
-    assert r.intent == Intents.REFUND_CONFIRMATION
-    assert r.action_type == ActionType.CONFIRM
+def test_parse_confirmation_signals():
+    # 确认态专用 parser（P0）：强确认/强取消/迟疑
+    assert parse_confirmation("确认，帮我退吧") == ConfirmSignal.CONFIRM
+    assert parse_confirmation("好的") == ConfirmSignal.CONFIRM
+    assert parse_confirmation("算了不退了") == ConfirmSignal.CANCEL
+    assert parse_confirmation("取消") == ConfirmSignal.CANCEL
+
+
+def test_out_of_scope_detected():
+    # 明确超范围 → out_of_scope（供 handle 做 scope 硬闸）
+    assert clf.classify_intent("今天天气怎么样").intent == Intents.OUT_OF_SCOPE
+    assert clf.classify_intent("给我讲个笑话").intent == Intents.OUT_OF_SCOPE
 
 
 def test_bare_confirmation_without_context_is_not_confirmation():
@@ -71,13 +79,10 @@ def test_bare_confirmation_without_context_is_not_confirmation():
     assert r.confidence == Confidence.LOW
 
 
-def test_uncertain_not_confirmation_in_waiting_state():
-    # "不确定"含"确定"子串，但是迟疑/否定，绝不能当确认（截图实测 bug）
-    r = clf.classify_intent("不确定", state=States.WAITING_USER_CONFIRM)
-    assert r.intent != Intents.REFUND_CONFIRMATION
-    # 同类伪确认
-    for t in ("不可以", "不对", "不行"):
-        assert clf.classify_intent(t, state=States.WAITING_USER_CONFIRM).intent != Intents.REFUND_CONFIRMATION
+def test_uncertain_not_confirmation():
+    # "不确定"含"确定"子串，但是迟疑 → parse_confirmation 判 UNCLEAR（fail-safe，不执行）
+    for t in ("不确定", "不可以", "不对", "不行", "再想想"):
+        assert parse_confirmation(t) == ConfirmSignal.UNCLEAR
 
 
 def test_intents_is_str_enum_backward_compatible():
