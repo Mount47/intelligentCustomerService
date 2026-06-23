@@ -97,7 +97,7 @@
 - **并发幂等硬验 / 生产**：Postgres（`config.py` 默认值 + `deploy/docker-compose.yml` 的 `postgres:16`；驱动 `psycopg`）。
 - **不引 MySQL**：项目走 PG 路线（为将来向量 RAG 留 pgvector 后路）；再加 MySQL 是无谓的方言/运维负担。
 **为什么**：sqlite 写操作全局串行锁，**无法真并发**——而退款第三层幂等（DB 唯一约束 + IntegrityError 回查）只有在多事务真正抢插时才触发。故招牌的并发幂等**必须在 PG 上实测**（`TEST_DATABASE_URL=postgres` 跑 `test_concurrency.py` 8 线程 barrier），sqlite 仅验顺序逻辑。开发期用 sqlite 是务实的便利取舍，不是降级；生产/硬验切 PG 仅一行配置之差，可移植性本身即设计收益。
-**现状**：PG 端到端（docker compose 真实拉起 + 真并发）尚未实测，列为待补——这是把"逻辑已验"升级到"实测已验"的关键一步。
+**现状**：✅ **PG 真并发实测已通过**（2026-06-23）——docker 起 `postgres:16`，`TEST_DATABASE_URL=PG` 跑 `test_concurrency.py`：8 线程 barrier 同发一笔退款，DB 只成 1 条、全拿同一 id、仅 1 个 created；并直接验证 `uq_refund_business` 唯一约束在并发下真实拒绝重复写(IntegrityError)。招牌幂等从"逻辑已验"升级到"实测已验"。（docker compose 全栈端到端拉起仍可补。）
 
 ## ADR-15 · 2026-06-23 · 高危写操作二次确认门（pending_action 绑定）
 **决策**：退款这类不可逆写操作，`refund_request` **不直接建草稿**，而是先把待执行动作存进 `ticket.pending_action`、状态转 `waiting_user_confirm`，**下一轮用户"确认"才执行**。确认态用**专门解析器** `parse_confirmation`（强确认→执行 / 强取消→清理 / 迟疑或其他→保持等待，fail-safe），不复用通用意图分类；带 TTL + 幂等。

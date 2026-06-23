@@ -133,8 +133,9 @@
 
 ## 验证说明
 - 已验证：venv 全套 **25 passed**（含退款三层幂等、工具审计落库、幂等贯通工具层）
-- 真并发(多线程)退款测试 → M9 用 postgres 补（sqlite 难真并发，现仅验顺序幂等 + IntegrityError 回查路径逻辑）
-- 未验证：docker compose 拉起；真实 LLM（M4）；真实 PG 连通
+- ✅ **真并发幂等实测已通过**（2026-06-23，docker postgres:16 + `TEST_DATABASE_URL=PG` 跑 test_concurrency：8 线程同发只成 1 条；唯一约束并发拒重实测）。详见 ADR-14。
+- ✅ 真实 LLM 端到端（百炼 qwen-plus / 裁判 qwen-max，`--real --judge-real`）
+- 未验证（可补）：docker compose **全栈**(api+worker+redis) 一键拉起端到端
 - 注：前端目录(frontend/，Vite)由用户脚手架，M10/M11 才做，不进 M3 提交
 
 ## 已定 LLM
