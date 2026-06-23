@@ -32,6 +32,7 @@
 - **会话级幂等**(ADR-19)：退款 get_active_refund + 物流催件 get_open_ticket，防同订单跨轮重复
 - **评测两层**(ADR-20)：LLM-as-Judge(盲评/锚定/可换模型 JUDGE_MODEL)；实测指出订单查询短板→ **OrderQuerySkill**(只读播报)
 - **P1 对话记忆**(ADR-21)：runner 加载工单历史进 ctx.history
+- **TODO-1 转人工会话摘要**：`handoff_service`(事实查 DB + 叙述 LLM/模板 + 失败降级)，接进运维端工单详情 → 给人工交接
 - 早期：#5 上下文注入+参数绑定、#8 退款会话幂等、前端打通(dev mock bug)、数据库分层(ADR-14)
 
 ## 加固计划（让项目更 solid/可用，按 ROI）
