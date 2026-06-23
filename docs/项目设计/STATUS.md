@@ -20,15 +20,19 @@
 ---
 
 ## 当前阶段
-**P1 对话记忆 完成** — runner 加载工单历史进 ctx.history，前端串 ticketId 续接，74 passed。
-> 已用百炼 qwen-plus 跑通真实端到端 + --real 评测（intent 0.971/工具 1.0/对抗全拦）。
+**智能层加固完成** — 结构化意图 + 退款确认流 + 硬边界 + 订单查询 Skill，**104 passed**。
+> 真实端到端：百炼 qwen-plus（裁判 qwen-max）`--real --judge-real`：流程指标全 1.0、对抗全拦、Judge 综合 4.57/5。详见 ADR-15~21。
 > 注：docs/ 不自动提交（用户要求）；STATUS 仍在工作区维护。
 
-## 本会话新增（已提交代码，docs 留工作区）
-- **评测·LLM-as-Judge 第二层**：`app/eval/judge.py`（盲评 + 参考答案锚定 + rubric 四维 + JSON 容错；StubJudge 确定性/LLMJudge 真实）；run_eval `--judge-real`；metrics 汇总 judge 维度；oos-1 改判 + `accept_intents`
-- **前端打通**：修 `client.ts` dev 强制 mock 的 bug（显式 `VITE_USE_MOCK=false` 现可连真后端）；`.env.local` 直连 8000；运行手册 2.4 更新；CORS 实测通过
-- **P1 对话记忆**：`runner._load_history`（窗口 20，role 映射）；`SendMessageRequest.ticketId` + ChatView 串 ticketId/「新对话」按钮；`tests/test_memory.py`
-- **记忆分层设计**（DECISIONS 待补 ADR）：客观事实查库(读)/偏好·摘要确定性抽取(写)/冲突信 DB；P1 短期已落，P2 事实接地/P3 偏好/P4 情景摘要/P5 向量 待做
+## 本会话新增（代码已提交；决策见 DECISIONS ADR-15~21）
+- **结构化意图**(ADR-16)：Intents→str-Enum + IntentResult(极性/动作/置信/需确认)；关键词只召回不触发；参数绑定防越权(IDOR)
+- **退款确认流**(ADR-15)：refund_request 低风险→`waiting_user_confirm`+pending_action，确认才建草稿；`parse_confirmation` 专用 parser(fail-safe，治"不确定"误判)；cancel/inquiry 闭环
+- **硬边界 guard 链**(ADR-17)：scope 硬闸(超范围固定拒答)/低置信澄清/确认态 parser，路由前确定性短路
+- **语义层起步**(ADR-18)：规则快路 + 召回不确定带历史 defer LLM；退款召回口语化"退X"补全
+- **会话级幂等**(ADR-19)：退款 get_active_refund + 物流催件 get_open_ticket，防同订单跨轮重复
+- **评测两层**(ADR-20)：LLM-as-Judge(盲评/锚定/可换模型 JUDGE_MODEL)；实测指出订单查询短板→ **OrderQuerySkill**(只读播报)
+- **P1 对话记忆**(ADR-21)：runner 加载工单历史进 ctx.history
+- 早期：#5 上下文注入+参数绑定、#8 退款会话幂等、前端打通(dev mock bug)、数据库分层(ADR-14)
 
 ## 加固计划（让项目更 solid/可用，按 ROI）
 1. ✅ 真实成本折算（pricing.py + TokenAcct，缓存读打折，stub→0）
