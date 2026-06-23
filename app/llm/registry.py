@@ -10,20 +10,22 @@ _OPENAI_COMPAT = {"openai", "openai_compat", "deepseek", "qwen", "gpt", "vllm", 
 _STUB = {"stub", "mock"}
 
 
-def build_llm_client(settings: Settings | None = None) -> LLMClient:
+def build_llm_client(settings: Settings | None = None, model: str | None = None) -> LLMClient:
+    """model 覆盖：同一 provider/key/base_url 下换模型（如裁判用更强的 qwen-max）。"""
     settings = settings or get_settings()
     provider = (settings.llm_provider or "").lower()
+    use_model = model or settings.llm_model
 
     if provider in _CLAUDE:
         from app.llm.claude_adapter import ClaudeAdapter
         return ClaudeAdapter(
-            model=settings.llm_model, api_key=settings.anthropic_api_key,
+            model=use_model, api_key=settings.anthropic_api_key,
             max_tokens=settings.llm_max_tokens, thinking=settings.llm_thinking,
         )
     if provider in _OPENAI_COMPAT:
         from app.llm.openai_compat_adapter import OpenAICompatAdapter
         return OpenAICompatAdapter(
-            model=settings.llm_model, api_key=settings.openai_api_key,
+            model=use_model, api_key=settings.openai_api_key,
             base_url=settings.openai_base_url or None, max_tokens=settings.llm_max_tokens,
         )
     if provider in _STUB:

@@ -41,6 +41,14 @@ def _claude_resp():
     )
 
 
+def test_build_llm_client_model_override():
+    """裁判换模型：同 provider/key/base_url 下，model 参数覆盖默认模型名。"""
+    s = Settings(llm_provider="qwen", llm_model="qwen-plus",
+                 openai_api_key="x", openai_base_url="http://x")
+    assert build_llm_client(s).model_name == "qwen-plus"
+    assert build_llm_client(s, model="qwen-max").model_name == "qwen-max"
+
+
 def test_claude_parse_and_request():
     fake = _FakeAnthropic(_claude_resp())
     ad = ClaudeAdapter(model="claude-opus-4-8", client=fake)

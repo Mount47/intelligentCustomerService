@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     openai_base_url: str = ""       # OpenAI兼容厂商的 base_url（DeepSeek/Qwen/本地 vLLM 等）
+    # LLM-as-Judge 裁判模型：同 provider/key 下换模型（空=与 Agent 同模型）。
+    # 建议用更强/不同源的(如 Agent=qwen-plus，裁判=qwen-max)，压制自评偏好。
+    judge_model: str = ""
     stub_delay_ms: int = 0          # 压测用：给 stub 模型加模拟处理时延，让队列削峰可见
 
     # 业务阈值（配置化）

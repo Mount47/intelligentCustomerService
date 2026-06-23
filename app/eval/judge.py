@@ -144,8 +144,11 @@ class StubJudge:
 
 
 def build_judge(real: bool = False) -> Judge:
-    """real=True 用 .env 的真实 provider 当裁判；默认 StubJudge（不调 API）。"""
+    """real=True 用真实 provider 当裁判（默认与 Agent 同模型；设 JUDGE_MODEL 可换更强/异源模型，
+    压制自评偏好——同 provider/key/base_url，仅换模型名）；否则 StubJudge（不调 API）。"""
     if real:
+        from app.core.config import get_settings
         from app.llm.registry import build_llm_client
-        return LLMJudge(build_llm_client())
+        judge_model = get_settings().judge_model or None
+        return LLMJudge(build_llm_client(model=judge_model))
     return StubJudge()
