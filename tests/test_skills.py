@@ -165,6 +165,28 @@ def test_refund_inquiry_no_write(db, user_order):
     assert db.query(RefundRequest).count() == 0
 
 
+# ---------- 订单查询（专门只读 Skill）----------
+def test_order_query_reports_status(db, user_order):
+    """'查我的订单' → OrderQuerySkill 结构化播报状态/金额（不再落兜底）。"""
+    u, o = user_order   # SO-T1, paid, 100
+    d, c = _run(db, u.id, "帮我查下我的订单", order_id=o.id)
+    assert c.intent == "order_query" and c.skill == "order_query"
+    assert c.state == States.RESOLVED_BY_AGENT
+    assert "已付款" in d.reply and "100" in d.reply and o.order_no in d.reply
+
+
+def test_order_query_missing_order_asks(db, user_order):
+    u, _ = user_order
+    _, c = _run(db, u.id, "帮我查下我的订单")    # 无 order_id
+    assert c.skill == "order_query" and c.state == States.INFO_REQUIRED
+
+
+def test_order_query_not_owner_to_human(db, user_order):
+    u, o = user_order
+    _, c = _run(db, u.id + 999, "查我的订单", order_id=o.id)   # 别人查这单 → 防越权
+    assert c.intent == "order_query" and c.state == States.NEED_HUMAN
+
+
 def test_refund_negation_does_not_create_draft(db, user_order):
     """'我不想退款了' → cancel_refund，不再误建草稿（结构化意图，治 #8 误判）。"""
     u, o = user_order

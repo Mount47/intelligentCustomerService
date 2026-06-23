@@ -217,8 +217,9 @@ def build_default_agent(llm: LLMClient | None = None, tool_registry=None) -> Age
     llm = llm or StubLLMClient()
     # 注册业务 Skill（未认领的意图落兜底 GeneralSkill）
     from app.skills.logistics_exception.handler import LogisticsExceptionSkill
+    from app.skills.order_query import OrderQuerySkill
     from app.skills.refund_handling.handler import RefundHandlingSkill
-    router = SkillRouter(skills=[RefundHandlingSkill(), LogisticsExceptionSkill()])
+    router = SkillRouter(skills=[RefundHandlingSkill(), LogisticsExceptionSkill(), OrderQuerySkill()])
     return AgentCore(
         llm=llm,
         classifier=HybridIntentClassifier(llm=llm),  # 规则快路 + 同一 LLM 兜底

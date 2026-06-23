@@ -13,7 +13,7 @@ from app.agent.state_machine import States
 class GeneralSkill:
     name = "general"
     # 兜底：未被业务 Skill 认领的意图都落到这里
-    triggers = {Intents.GENERAL_POLICY_QUERY, Intents.OUT_OF_SCOPE, Intents.ORDER_QUERY}
+    triggers = {Intents.GENERAL_POLICY_QUERY, Intents.OUT_OF_SCOPE}  # order_query 已由 OrderQuerySkill 接管
 
     def plan(self, ctx: AgentContext) -> SkillPlan:
         return SkillPlan(
