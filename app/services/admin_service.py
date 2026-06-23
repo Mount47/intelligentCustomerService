@@ -61,6 +61,10 @@ def get_ticket_detail(db: Session, ticket_id: int) -> TicketDetail | None:
         AgentTimelineStep(id="current", kind="state", title="当前状态",
                           detail=t.status, created_at=t.updated_at),
     ]
+    from app.schemas.admin import HandoffSummary
+    from app.services import handoff_service
+    # 交接摘要：模板模式(不调 API)；事实字段来自 DB。需真实叙述可传 llm。
+    summ = handoff_service.summarize_for_human(db, t.id)
     return TicketDetail(
         id=t.id, user_id=t.user_id, order_no=_order_no(db, t.order_id),
         category=_cat(t.category), priority=t.priority, status=t.status,
@@ -68,6 +72,7 @@ def get_ticket_detail(db: Session, ticket_id: int) -> TicketDetail | None:
         state_timeline=timeline,
         messages=[ChatMessageView(id=m.id, sender=m.sender_type, content=m.content,
                                   created_at=m.created_at) for m in msgs],
+        handoff_summary=HandoffSummary(**summ) if summ else None,
     )
 
 

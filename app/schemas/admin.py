@@ -47,9 +47,22 @@ class SessionSummary(CamelModel):
     updated_at: Optional[datetime] = None
 
 
+class HandoffSummary(CamelModel):
+    """转人工交接摘要：事实字段来自 DB(准)，叙述来自 LLM/模板(TODO-1)。"""
+    user_need: str                          # 用户核心诉求
+    handoff_reason: str                     # 转人工原因
+    order_info: Optional[str] = None        # 涉及订单(DB)
+    refund_info: Optional[str] = None       # 退款概况(DB)
+    agent_actions: List[str] = []           # Agent 已做(DB)
+    conversation_brief: str = ""            # 对话经过(LLM/模板)
+    message_count: int = 0
+    generated_by: str = "template"          # template | llm:<model>
+
+
 class TicketDetail(TicketSummary):
     state_timeline: List[AgentTimelineStep] = []
     messages: List[ChatMessageView] = []
+    handoff_summary: Optional[HandoffSummary] = None   # 交接摘要(给人工)
 
 
 class SessionDetail(ChatSession):
