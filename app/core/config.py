@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     sla_default_hours: int = 24
     sla_high_priority_hours: int = 4
 
+    # 限流：每用户每分钟最多发起的消息数（<=0 关闭）。接入层前置削峰闸。
+    chat_rate_limit_per_min: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:

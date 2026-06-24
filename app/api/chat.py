@@ -4,6 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.ratelimit import allow_request
 from app.db.session import get_db
 from app.schemas.chat import ChatMessageIn, ChatSession, SendMessageResponse
 from app.services import chat_service
@@ -41,6 +43,11 @@ def _dispatch(session_id: int) -> None:
 @router.post("/message", response_model=SendMessageResponse)
 def post_message(payload: ChatMessageIn, db: Session = Depends(get_db)) -> SendMessageResponse:
     """落用户消息 + 建 session + 入队，立即返回（不阻塞等待 Agent）。"""
+    # 接入层前置限流：超额在入队前挡掉，保护队列与下游 LLM 成本（fail-open）
+    limit = get_settings().chat_rate_limit_per_min
+    allowed, _ = allow_request(f"chat:{payload.user_id}", limit, window_sec=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
     sess, dedup = chat_service.accept_message(db, payload)
     if not dedup:
         _dispatch(sess.id)
