@@ -20,7 +20,7 @@
 ---
 
 ## 当前阶段
-**智能层 + 高并发可用 + 流式 + 长对话记忆都已加固** — 结构化意图/确认流/硬边界/订单查询/P2 事实接地/评测多轮 + **限流·熔断·PG 真并发实测·SSE 流式·P4 长对话摘要**，**134 passed**。
+**智能层 + 高并发可用 + 流式 + 长对话记忆 + SLA 闭环都已加固** — 结构化意图/确认流/硬边界/订单查询/P2 事实接地/评测多轮 + **限流·熔断·PG 真并发实测·SSE 流式·P4 长对话摘要·SLA 监控闭环**，**139 passed**。
 > 真实端到端：百炼 qwen-plus（裁判 qwen-max）`--real --judge-real`：流程指标全 1.0、对抗全拦、Judge 综合 4.57/5。详见 ADR-15~21。
 > 注：docs/ 不自动提交（用户要求）；STATUS 仍在工作区维护。
 
@@ -44,6 +44,7 @@
 - **PG 真并发实测已验**(ADR-14 现状)：docker 起 PG，64 线程 barrier 同抢一笔退款 → 只成 1 条；两条唯一约束(uq_refund_user_idem + **uq_refund_business**)在并发下都生效
 - **SSE 流式**(ADR-26)：`/chat/session/{id}/stream` 服务端推送进度替代轮询，前端 EventSource 接、异常退回轮询；诚实定位=推进度非 token 流式
 - **P4 长对话摘要**(ADR-27)：`_load_history` 按 token 预算切，超预算旧段 LLM 摘成前置消息(模板兜底)；同时治 TODO-2 溢出；硬键不靠摘要(查库)；不上向量记忆
+- **SLA 监控闭环**(ADR-28)：`sla_service.mark_resolved`(解决回填 resolved_at/is_timeout)+ `sla_stats`(met/breached/pending)；runner 在 resolved 时回填；进 `compute_metrics` + `AdminMetrics.sla`(此前只写不查)
 - **更正**：本会话一度误判"business_key 无唯一约束有 TOCTOU"——实为 `models.py` 有 `uq_refund_business`，三层幂等两条路径都并发安全(代码>文档的活例：我读漏、文档对)
 
 ## 加固计划（让项目更 solid/可用，按 ROI）
@@ -55,7 +56,8 @@
 6. ✅ Agent 上下文注入（order_id/user_id 进 system + 参数绑定，修工具调用 FAILED；见实际问题#5）
 7. ✅ **高并发可用支柱**（限流 ADR-24 / 熔断 ADR-25 / PG 真并发实测已验 ADR-14 / SSE 流式 ADR-26）
 8. ✅ P4 长对话摘要（token 预算 + 滚动摘要，ADR-27）；溢出预防已做，软着陆 backstop 列可选
-9. ⬜ 可选：**知识库混合检索 RAG**（关键词→语义召回，唯一实打实短板）/ LLM 缓存(成本) / SLA 监控闭环(只写不查) / Alembic / 删 quality_reviews 空表
+9. ✅ SLA 监控闭环（回填 + 达成统计进 metrics，ADR-28）
+10. ⬜ 可选：知识库 RAG / LLM 缓存（均评估为本场景凑数，倾向不做）/ 延迟分解（可观测深化）/ 前端健壮性（错误/加载/空态）/ Alembic / 删 quality_reviews 空表
 
 ## 上个完成项（M9）
 
