@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import AgentSession, Ticket, TicketMessage
 from app.llm.base import Msg
-from app.services import ticket_service
+from app.services import sla_service, ticket_service
 from app.tools.base import ToolContext
 
 logger = get_logger(__name__)
@@ -106,6 +106,8 @@ def run_agent_session(db: Session, session_id: int, agent=None,
         sess.cache_hit = acct.cache_hit
         sess.task_status = task_status_for(ctx.state)
         ticket.status = ctx.state  # 工单状态由 agent 最终态驱动
+        if ctx.state == States.RESOLVED_BY_AGENT:   # 解决 → 回填 SLA(闭环)；转人工/等待态留给后续
+            sla_service.mark_resolved(db, sess.ticket_id)
     except Exception as exc:  # noqa: BLE001 — 异步任务不崩
         logger.exception("agent session %s failed", session_id)
         # 超时单独标记（不导入 celery，按类名判断 SoftTimeLimitExceeded）

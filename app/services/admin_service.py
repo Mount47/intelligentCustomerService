@@ -106,4 +106,5 @@ def build_admin_metrics(db: Session) -> AdminMetrics:
         sessions_by_task_status=by,
         total_tokens=m["cost"]["total_tokens"],
         avg_tokens_per_session=m["cost"]["avg_tokens_per_session"],
+        sla=m["sla"],
     )

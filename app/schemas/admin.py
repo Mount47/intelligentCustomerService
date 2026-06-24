@@ -21,6 +21,8 @@ class AdminMetrics(CamelModel):
     sessions_by_task_status: dict = {}
     total_tokens: int = 0
     avg_tokens_per_session: float = 0.0
+    # SLA 闭环：{total, met, breached, pending, met_rate}（breached 含正在违约的超时工单）
+    sla: dict = {}
 
 
 class TicketSummary(CamelModel):

@@ -47,9 +47,11 @@ def compute_metrics(db: Session) -> dict:
     calls_ok = db.scalar(select(func.count()).select_from(AgentToolCall)
                          .where(AgentToolCall.success.is_(True))) or 0
 
+    from app.services import sla_service
     return {
         "sessions_by_task_status": dict(by_status),
         "queue_depth": _queue_depth(),
+        "sla": sla_service.sla_stats(db),
         "totals": {
             "sessions": n,
             "tickets": db.scalar(select(func.count()).select_from(Ticket)) or 0,
