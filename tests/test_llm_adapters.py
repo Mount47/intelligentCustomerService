@@ -122,11 +122,22 @@ def test_openai_message_mapping_tool_roundtrip():
 
 
 # ---------- registry ----------
+def _adapter(provider):
+    # 关熔断 → 直接拿裸适配器，验 provider→adapter 选型
+    return build_llm_client(Settings(llm_provider=provider, circuit_breaker_enabled=False))
+
+
 def test_registry_picks_adapter_by_provider():
-    assert type(build_llm_client(Settings(llm_provider="claude"))).__name__ == "ClaudeAdapter"
-    assert type(build_llm_client(Settings(llm_provider="deepseek"))).__name__ == "OpenAICompatAdapter"
-    assert type(build_llm_client(Settings(llm_provider="qwen"))).__name__ == "OpenAICompatAdapter"
-    assert type(build_llm_client(Settings(llm_provider="gpt"))).__name__ == "OpenAICompatAdapter"
-    assert type(build_llm_client(Settings(llm_provider="stub"))).__name__ == "StubLLMClient"
+    assert type(_adapter("claude")).__name__ == "ClaudeAdapter"
+    assert type(_adapter("deepseek")).__name__ == "OpenAICompatAdapter"
+    assert type(_adapter("qwen")).__name__ == "OpenAICompatAdapter"
+    assert type(_adapter("gpt")).__name__ == "OpenAICompatAdapter"
+    assert type(_adapter("stub")).__name__ == "StubLLMClient"
     with pytest.raises(LLMError):
-        build_llm_client(Settings(llm_provider="nonsense"))
+        build_llm_client(Settings(llm_provider="nonsense", circuit_breaker_enabled=False))
+
+
+def test_registry_wraps_with_circuit_breaker_by_default():
+    # 默认开启熔断 → 返回包装客户端，但选型不变（model_name 透传裸适配器）
+    c = build_llm_client(Settings(llm_provider="stub"))
+    assert type(c).__name__ == "CircuitBreakerLLMClient"

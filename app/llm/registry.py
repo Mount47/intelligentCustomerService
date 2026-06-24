@@ -11,8 +11,27 @@ _STUB = {"stub", "mock"}
 
 
 def build_llm_client(settings: Settings | None = None, model: str | None = None) -> LLMClient:
-    """model 覆盖：同一 provider/key/base_url 下换模型（如裁判用更强的 qwen-max）。"""
+    """构建 provider 客户端，并按配置套熔断降级（ADR-7/11 抽象的价值兑现）。
+
+    model 覆盖：同一 provider/key/base_url 下换模型（如裁判用更强的 qwen-max）。
+    """
     settings = settings or get_settings()
+    client = _build_raw(settings, model)
+    if not settings.circuit_breaker_enabled:
+        return client
+    from app.llm.circuit_breaker import CircuitBreakerLLMClient
+    # fallback：配了降级模型且与主模型不同 → 熔断时无缝切它；否则熔断=快速失败
+    fb_model = settings.llm_fallback_model
+    fallback = (_build_raw(settings, fb_model)
+                if fb_model and fb_model != (model or settings.llm_model) else None)
+    return CircuitBreakerLLMClient(
+        client, fallback=fallback,
+        fail_max=settings.circuit_breaker_fail_max,
+        reset_timeout=settings.circuit_breaker_reset_sec)
+
+
+def _build_raw(settings: Settings, model: str | None = None) -> LLMClient:
+    """构建裸适配器（不套熔断），供主客户端与 fallback 复用。"""
     provider = (settings.llm_provider or "").lower()
     use_model = model or settings.llm_model
 

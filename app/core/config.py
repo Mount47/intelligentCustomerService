@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     # 限流：每用户每分钟最多发起的消息数（<=0 关闭）。接入层前置削峰闸。
     chat_rate_limit_per_min: int = 60
 
+    # LLM 熔断降级：连续失败 fail_max 次 → 熔断 reset_sec 秒，期间快速失败/走 fallback。
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_fail_max: int = 3
+    circuit_breaker_reset_sec: float = 30.0
+    llm_fallback_model: str = ""    # 降级模型（同 provider 换更稳/更便宜；空=熔断时直接快速失败）
+
 
 @lru_cache
 def get_settings() -> Settings:
