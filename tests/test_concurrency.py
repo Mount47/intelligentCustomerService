@@ -38,7 +38,7 @@ def test_concurrent_same_refund_creates_one_row(tmp_path):
         s.commit()
         uid, oid = u.id, o.id
 
-    n = 8
+    n = int(os.getenv("CONC_THREADS", "8"))   # PG 上可调大压更强争用：CONC_THREADS=64
     barrier = threading.Barrier(n)
     results: list[dict] = []
     errors: list[Exception] = []
