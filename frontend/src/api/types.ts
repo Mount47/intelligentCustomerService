@@ -72,6 +72,9 @@ export interface AdminMetrics {
   avgTokenCost: number;
   p95LatencyMs: number;
   activeSessions: number;
+  queueDepth?: number | null;
+  // sla 是后端普通 dict，键不被 camel 化（met_rate 保持 snake）
+  sla?: { total: number; met: number; breached: number; pending: number; met_rate: number };
 }
 
 export interface TicketSummary {
