@@ -5,6 +5,7 @@
 """
 import os
 import threading
+import uuid
 
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
@@ -28,11 +29,13 @@ def test_concurrent_same_refund_creates_one_row(tmp_path):
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
 
+    # order_no 唯一，避免在持久化 PG 上重复跑时撞 orders.order_no 唯一索引（测试可重入）
+    order_no = f"CONC-{uuid.uuid4().hex[:8]}"
     with Session() as s:
         u = User(username="conc")
         s.add(u)
         s.flush()
-        o = Order(user_id=u.id, order_no="CONC-1", status="paid",
+        o = Order(user_id=u.id, order_no=order_no, status="paid",
                   total_amount=100, product_type="normal")
         s.add(o)
         s.commit()
