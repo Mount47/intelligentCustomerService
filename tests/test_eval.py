@@ -4,7 +4,7 @@ from app.eval.run_eval import evaluate
 
 def test_eval_stub_metrics():
     summary, results = evaluate(real=False)
-    assert summary["cases"] == 35                      # 30 常规 + 5 对抗
+    assert summary["cases"] == 36                      # 31 常规 + 5 对抗
     # 流程类：规则意图/路由/状态机/人工升级全对
     assert summary["intent_accuracy"] == 1.0
     assert summary["skill_routing_accuracy"] == 1.0

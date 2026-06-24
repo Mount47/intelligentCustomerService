@@ -80,7 +80,7 @@ _KEYWORDS: list[tuple[Intents, tuple[str, ...]]] = [
     (Intents.LOGISTICS_QUERY, ("物流", "快递", "到哪", "发货", "运单", "单号")),
     (Intents.INVOICE_REQUEST, ("发票", "开票", "税号", "抬头")),
     (Intents.COUPON_ISSUE, ("优惠券", "券", "满减", "折扣码")),
-    (Intents.ORDER_QUERY, ("订单", "我的单", "买的")),
+    (Intents.ORDER_QUERY, ("订单", "我的单", "买的", "买了什么", "买了啥", "买过什么")),
 ]
 
 ALL_INTENTS: tuple[Intents, ...] = tuple(Intents)

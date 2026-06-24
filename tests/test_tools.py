@@ -16,7 +16,7 @@ def test_registry_loads_all_tools():
     names = set(reg.names())
     assert {"get_order_detail", "check_refund_policy", "create_refund_draft",
             "get_logistics_status", "create_ticket", "search_policy_docs"} <= names
-    assert len(names) == 14
+    assert len(names) == 15
 
 
 def test_tool_returns_result_and_writes_audit(db, user_order):

@@ -175,10 +175,31 @@ def test_order_query_reports_status(db, user_order):
     assert "已付款" in d.reply and "100" in d.reply and o.order_no in d.reply
 
 
-def test_order_query_missing_order_asks(db, user_order):
+def test_order_query_no_order_lists_user_orders(db, user_order):
+    """无 order_id 时主动列出本人订单（不再卡住要订单号），事实接地提升 helpfulness。"""
+    u, o = user_order      # alice 名下有 SO-T1
+    d, c = _run(db, u.id, "帮我查下我的订单")    # 无 order_id
+    assert c.skill == "order_query" and c.state == States.RESOLVED_BY_AGENT
+    assert o.order_no in d.reply and "已付款" in d.reply
+
+
+def test_order_query_no_order_no_records(db, user_order):
+    """无 order_id 且名下无订单 → 如实告知，不卡死、不转人工。"""
     u, _ = user_order
-    _, c = _run(db, u.id, "帮我查下我的订单")    # 无 order_id
-    assert c.skill == "order_query" and c.state == States.INFO_REQUIRED
+    d, c = _run(db, u.id + 999, "帮我查下我的订单")    # 该用户无任何订单
+    assert c.skill == "order_query" and c.state == States.RESOLVED_BY_AGENT
+    assert "未查询到" in d.reply
+
+
+def test_order_query_reports_items(db, user_order):
+    """'我买了什么' → 订单详情含商品明细（条目级事实查库，不靠 LLM 编）。"""
+    from app.db.models import OrderItem
+    u, o = user_order
+    db.add(OrderItem(order_id=o.id, product_name="蓝牙耳机", quantity=2, unit_price=50))
+    db.flush()
+    d, c = _run(db, u.id, "这单我买了什么", order_id=o.id)
+    assert c.skill == "order_query" and c.state == States.RESOLVED_BY_AGENT
+    assert "蓝牙耳机" in d.reply and "×2" in d.reply
 
 
 def test_order_query_not_owner_to_human(db, user_order):

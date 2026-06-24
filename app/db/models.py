@@ -73,6 +73,25 @@ class Order(_Created, Base):
     logistics: Mapped[Optional["Logistics"]] = relationship(
         back_populates="order", uselist=False
     )
+    # 一对多商品明细：order.items 拿到这单买了哪些商品（支撑"我买了什么"的条目级查询）
+    items: Mapped[list["OrderItem"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+
+
+# ── 订单商品明细表 ──────────────────────────────────────────────────────────
+# 用处：记录一个订单买了哪些商品（名称/数量/单价）。支撑 OrderQuerySkill 回答
+#       "我买了什么/这单都有啥"——条目级事实必须查库，不能让 LLM 从对话里编（同读写分离）。
+# 关联：多对一 Order（order_id）。orders 只存订单级金额，行项级明细独立成表。
+class OrderItem(_Created, Base):
+    __tablename__ = "order_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    product_name: Mapped[str] = mapped_column(String(128))           # 商品名，用于向用户播报
+    quantity: Mapped[int] = mapped_column(Integer, default=1)        # 购买数量
+    unit_price: Mapped[float] = mapped_column(Numeric(10, 2))        # 单价（下单时价格）
+
+    order: Mapped["Order"] = relationship(back_populates="items")
 
 
 # ── 物流表 ───────────────────────────────────────────────────────────────

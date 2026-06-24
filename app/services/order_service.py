@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Order
+from app.db.models import Order, OrderItem
 
 
 def get_order(db: Session, order_id: int) -> Order | None:
@@ -12,7 +12,14 @@ def get_order(db: Session, order_id: int) -> Order | None:
 
 
 def get_user_orders(db: Session, user_id: int) -> list[Order]:
-    return list(db.scalars(select(Order).where(Order.user_id == user_id)).all())
+    return list(db.scalars(
+        select(Order).where(Order.user_id == user_id).order_by(Order.id.desc())).all())
+
+
+def get_order_items(db: Session, order_id: int) -> list[OrderItem]:
+    """订单的商品明细（条目级事实，供"我买了什么"查询）。"""
+    return list(db.scalars(
+        select(OrderItem).where(OrderItem.order_id == order_id).order_by(OrderItem.id)).all())
 
 
 def check_owner(db: Session, order_id: int, user_id: int) -> bool:

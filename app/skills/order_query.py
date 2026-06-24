@@ -21,8 +21,17 @@ _STATUS_CN = {
 }
 
 
+_LIST_CAP = 8  # 列单上限，过多只展示最近 N 笔（避免刷屏）
+
+
 def _d(dt: datetime | None) -> str:
     return dt.strftime("%Y-%m-%d") if dt else ""
+
+
+def _items_phrase(db, order_id: int) -> str:
+    """商品明细一句话：'A×2、B×1'；无明细返回空串。"""
+    items = order_service.get_order_items(db, order_id)
+    return "、".join(f"{it.product_name}×{it.quantity}" for it in items)
 
 
 class OrderQuerySkill:
@@ -30,10 +39,11 @@ class OrderQuerySkill:
     triggers = {Intents.ORDER_QUERY}
 
     def plan(self, ctx: AgentContext) -> SkillPlan:
+        # 无 order_id 不再索取订单号——finalize 改为主动列出本人订单（不短路到 info_required）
         if ctx.order_id is None:
-            return SkillPlan(system_prompt=_SYSTEM, allowed_tools=[], required_info=["订单号"])
+            return SkillPlan(system_prompt=_SYSTEM, allowed_tools=[])
         return SkillPlan(system_prompt=_SYSTEM,
-                         allowed_tools=["get_order_detail", "get_logistics_status"],
+                         allowed_tools=["get_order_detail", "get_order_items", "get_logistics_status"],
                          max_iterations=2)
 
     def finalize(self, ctx: AgentContext, tool_ctx=None) -> Decision:
@@ -41,8 +51,9 @@ class OrderQuerySkill:
             return Decision("系统暂时无法处理，已为您转人工。", States.NEED_HUMAN,
                             need_handoff=True, handoff_reason="no_tool_context")
         db = tool_ctx.db
+        # 没指定订单号：主动列出本人近期订单，而不是卡住要订单号（事实接地，提升 helpfulness）
         if ctx.order_id is None:
-            return Decision("请提供需要查询的订单号。", States.INFO_REQUIRED, required_info=["订单号"])
+            return self._list_orders(db, ctx.user_id)
 
         order = order_service.get_order(db, ctx.order_id)
         if order is None:
@@ -53,6 +64,9 @@ class OrderQuerySkill:
 
         parts = [f"订单 {order.order_no}：状态 {_STATUS_CN.get(order.status, order.status)}",
                  f"金额 {float(order.total_amount)} 元"]
+        goods = _items_phrase(db, order.id)
+        if goods:                               # 条目级"买了什么"——查库填，不让 LLM 编
+            parts.append(f"商品：{goods}")
         times = [f"{label} {_d(t)}" for label, t in
                  (("付款", order.paid_at), ("发货", order.shipped_at), ("签收", order.delivered_at)) if t]
         if times:
@@ -63,3 +77,20 @@ class OrderQuerySkill:
             carrier = (logi.carrier or "").strip()
             parts.append(f"物流：{carrier} 最新位置 {loc}".strip())
         return Decision("；".join(parts) + "。", States.RESOLVED_BY_AGENT)
+
+    def _list_orders(self, db, user_id: int) -> Decision:
+        """列出本人近期订单（每行：订单号/状态/金额/商品概要）。无订单则如实告知。"""
+        orders = order_service.get_user_orders(db, user_id)
+        if not orders:
+            return Decision("未查询到您名下的订单。", States.RESOLVED_BY_AGENT)
+        shown = orders[:_LIST_CAP]
+        lines = []
+        for o in shown:
+            seg = f"· {o.order_no}（{_STATUS_CN.get(o.status, o.status)}，{float(o.total_amount)} 元"
+            goods = _items_phrase(db, o.id)
+            seg += f"，{goods}）" if goods else "）"
+            lines.append(seg)
+        head = f"您名下共 {len(orders)} 笔订单"
+        head += f"，最近 {len(shown)} 笔：" if len(orders) > len(shown) else "："
+        tail = "\n如需某笔的物流详情，请告知订单号。"
+        return Decision(head + "\n" + "\n".join(lines) + tail, States.RESOLVED_BY_AGENT)

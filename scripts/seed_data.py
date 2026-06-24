@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from app.core.logging import get_logger, setup_logging
 from app.db.init_db import init_db
-from app.db.models import KnowledgeDoc, Logistics, Order, User
+from app.db.models import KnowledgeDoc, Logistics, Order, OrderItem, User
 from app.db.session import SessionLocal
 
 logger = get_logger(__name__)
@@ -18,6 +18,27 @@ logger = get_logger(__name__)
 ORDER_STATUSES = ["pending_payment", "paid", "shipped", "delivered", "cancelled"]
 PRODUCT_TYPES = ["normal", "fresh_food", "customized_product"]
 LOGI_STATUSES = ["pending", "in_transit", "delivered", "exception"]
+
+# 各商品类型的候选商品名，给订单造条目级明细（支撑"我买了什么"）
+PRODUCT_CATALOG = {
+    "normal": ["蓝牙耳机", "保温杯", "运动鞋", "机械键盘", "双肩包"],
+    "fresh_food": ["阳光玫瑰葡萄", "智利车厘子", "现切牛排", "海南芒果"],
+    "customized_product": ["定制刻字钢笔", "定制相册", "定制T恤"],
+}
+
+
+def _add_items(db, order: Order, rng: random.Random) -> None:
+    """给订单造 1~3 条商品明细，单价合计大致贴近订单金额。"""
+    names = PRODUCT_CATALOG.get(order.product_type, PRODUCT_CATALOG["normal"])
+    k = rng.randint(1, min(3, len(names)))
+    picks = rng.sample(names, k)
+    total = float(order.total_amount)
+    for i, name in enumerate(picks):
+        qty = rng.randint(1, 2)
+        # 末条用余额兜底，保证条目合计 ≈ 订单金额
+        unit = round(total / (k * qty), 2) if i < k - 1 else round(max(total / qty, 1), 2)
+        total -= unit * qty
+        db.add(OrderItem(order_id=order.id, product_name=name, quantity=qty, unit_price=max(unit, 1)))
 
 POLICIES = [
     ("退款政策", "refund_policy",
@@ -80,6 +101,7 @@ def _seed_scenarios(db, now: datetime) -> tuple[int, list[tuple]]:
     other = User(username="demo_other", phone="13900000001", email="other@example.com")
     db.add_all([demo, other])
     db.flush()
+    rng = random.Random(7)   # 场景订单的明细也要可复现
     rows: list[tuple] = []
     for order_no, message, expected, spec in SCENARIOS:
         owner = other.id if spec.get("other_owner") else demo.id
@@ -92,6 +114,7 @@ def _seed_scenarios(db, now: datetime) -> tuple[int, list[tuple]]:
             o.status = "delivered"
         db.add(o)
         db.flush()
+        _add_items(db, o, rng)
         lg = spec.get("logistics")
         if lg:
             db.add(Logistics(
@@ -159,6 +182,7 @@ def seed() -> None:
         db.flush()
 
         for o in orders:
+            _add_items(db, o, rng)
             if o.status in ("shipped", "delivered"):
                 lstatus = "delivered" if o.status == "delivered" else rng.choice(
                     ["in_transit", "in_transit", "exception"]

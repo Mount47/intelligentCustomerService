@@ -30,6 +30,18 @@ def get_user_orders(ctx: ToolContext, user_id: int):
     return ok({"orders": [_order_dict(o) for o in orders]})
 
 
+def get_order_items(ctx: ToolContext, order_id: int, user_id: int | None = None):
+    o = order_service.get_order(ctx.db, order_id)
+    if not o:
+        return err("order_not_found", "订单不存在")
+    if user_id is not None and o.user_id != user_id:
+        return err("not_owner", "订单不属于该用户")
+    items = order_service.get_order_items(ctx.db, order_id)
+    return ok({"order_no": o.order_no,
+               "items": [{"product_name": it.product_name, "quantity": it.quantity,
+                          "unit_price": float(it.unit_price)} for it in items]})
+
+
 def check_order_owner(ctx: ToolContext, order_id: int, user_id: int):
     return ok({"is_owner": order_service.check_owner(ctx.db, order_id, user_id)})
 
@@ -43,6 +55,11 @@ TOOLS = [
     RegisteredTool("get_user_orders", "查询某用户的全部订单。",
                    {"type": "object", "properties": {"user_id": {"type": "integer"}},
                     "required": ["user_id"]}, get_user_orders),
+    RegisteredTool("get_order_items", "查询订单的商品明细（买了哪些商品/数量/单价）。",
+                   {"type": "object",
+                    "properties": {"order_id": {"type": "integer"},
+                                   "user_id": {"type": "integer"}},
+                    "required": ["order_id"]}, get_order_items),
     RegisteredTool("check_order_owner", "校验订单是否属于该用户。",
                    {"type": "object",
                     "properties": {"order_id": {"type": "integer"},
