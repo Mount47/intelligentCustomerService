@@ -20,7 +20,7 @@
 ---
 
 ## 当前阶段
-**智能层加固完成** — 结构化意图 + 退款确认流 + 硬边界 + 订单查询 Skill，**104 passed**。
+**智能层 + 高并发可用 + 流式 + 长对话记忆都已加固** — 结构化意图/确认流/硬边界/订单查询/P2 事实接地/评测多轮 + **限流·熔断·PG 真并发实测·SSE 流式·P4 长对话摘要**，**134 passed**。
 > 真实端到端：百炼 qwen-plus（裁判 qwen-max）`--real --judge-real`：流程指标全 1.0、对抗全拦、Judge 综合 4.57/5。详见 ADR-15~21。
 > 注：docs/ 不自动提交（用户要求）；STATUS 仍在工作区维护。
 
@@ -31,18 +31,31 @@
 - **语义层起步**(ADR-18)：规则快路 + 召回不确定带历史 defer LLM；退款召回口语化"退X"补全
 - **会话级幂等**(ADR-19)：退款 get_active_refund + 物流催件 get_open_ticket，防同订单跨轮重复
 - **评测两层**(ADR-20)：LLM-as-Judge(盲评/锚定/可换模型 JUDGE_MODEL)；实测指出订单查询短板→ **OrderQuerySkill**(只读播报)
+- **评测多轮校准**：run_eval 加多轮支持(`turns` 同 ticket 顺序跑，期望字段可选)+ `expected_refund_count` 硬验去重；补确认流/取消/ADR-19 跨轮去重/迟疑续接 4 条多轮 + 提示注入/越权查询 2 条对抗；47 行全过
 - **P1 对话记忆**(ADR-21)：runner 加载工单历史进 ctx.history
 - **TODO-1 转人工会话摘要**：`handoff_service`(事实查 DB + 叙述 LLM/模板 + 失败降级)，接进运维端工单详情 → 给人工交接
 - 早期：#5 上下文注入+参数绑定、#8 退款会话幂等、前端打通(dev mock bug)、数据库分层(ADR-14)
+
+## 本会话新增·第二段（2026-06-24；决策见 DECISIONS ADR-22~26）
+- **事实接地**(ADR-22)：order_items 表 + get_order_items 工具；order_query 无单号→主动列单、详情含明细；"买了什么"入意图词
+- **评测多轮校准**(ADR-23)：run_eval 支持 turns 同 ticket 顺序跑 + expected_refund_count 按 order_id 硬验去重；多轮 4 条 + 对抗 2 条；47 行全过
+- **接入层限流**(ADR-24)：`core/ratelimit` Redis 固定窗口 fail-open；POST 入队前按 user 限流、超额 429；Redis 终于真用起来
+- **Provider 熔断降级**(ADR-25)：`CircuitBreakerLLMClient` 三态熔断包 LLMClient，连续失败快速失败/切 fallback；复用 ADR-7/11 抽象
+- **PG 真并发实测已验**(ADR-14 现状)：docker 起 PG，64 线程 barrier 同抢一笔退款 → 只成 1 条；两条唯一约束(uq_refund_user_idem + **uq_refund_business**)在并发下都生效
+- **SSE 流式**(ADR-26)：`/chat/session/{id}/stream` 服务端推送进度替代轮询，前端 EventSource 接、异常退回轮询；诚实定位=推进度非 token 流式
+- **P4 长对话摘要**(ADR-27)：`_load_history` 按 token 预算切，超预算旧段 LLM 摘成前置消息(模板兜底)；同时治 TODO-2 溢出；硬键不靠摘要(查库)；不上向量记忆
+- **更正**：本会话一度误判"business_key 无唯一约束有 TOCTOU"——实为 `models.py` 有 `uq_refund_business`，三层幂等两条路径都并发安全(代码>文档的活例：我读漏、文档对)
 
 ## 加固计划（让项目更 solid/可用，按 ROI）
 1. ✅ 真实成本折算（pricing.py + TokenAcct，缓存读打折，stub→0）
 2. ✅ Worker 健壮性（failed/timeout 分标 + retry_count + celery 重抛重试，线程/测试不崩）
 3. ✅ 订单可用性（chat_service.resolve_order_from_text：文本提取订单号/id 校验归属；多轮补 ticket.order_id；前端示例对齐 seed）
 4. ✅ 真实 LLM 端到端（百炼 qwen-plus）+ --real 评测（含 LLM-as-Judge 第二层）
-5. ⬜ P2 事实接地（order_query 主动查 get_user_orders）/ P3 偏好 / P4 情景摘要
-6. ⬜ Agent 上下文注入（order_id/user_id 进 system，修工具调用 FAILED；见根因分析）
-7. ⬜ 可选：向量 RAG / 质检 Skill / SLA 监控(sla_records 只写不查) / Alembic / 删 quality_reviews 空表
+5. ✅ P2 事实接地（order_items 表 + get_order_items；order_query 无单号→主动列单、详情含明细、"买了什么"入意图词）。P3 偏好砍；P4 情景摘要并入 TODO-2
+6. ✅ Agent 上下文注入（order_id/user_id 进 system + 参数绑定，修工具调用 FAILED；见实际问题#5）
+7. ✅ **高并发可用支柱**（限流 ADR-24 / 熔断 ADR-25 / PG 真并发实测已验 ADR-14 / SSE 流式 ADR-26）
+8. ✅ P4 长对话摘要（token 预算 + 滚动摘要，ADR-27）；溢出预防已做，软着陆 backstop 列可选
+9. ⬜ 可选：**知识库混合检索 RAG**（关键词→语义召回，唯一实打实短板）/ LLM 缓存(成本) / SLA 监控闭环(只写不查) / Alembic / 删 quality_reviews 空表
 
 ## 上个完成项（M9）
 
