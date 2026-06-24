@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # 限流：每用户每分钟最多发起的消息数（<=0 关闭）。接入层前置削峰闸。
     chat_rate_limit_per_min: int = 60
 
+    # SSE 流式：服务端轮询间隔与最大轮次（max_iters*interval = 最长流时长，兜底防无限流）
+    sse_poll_interval_sec: float = 1.0
+    sse_max_iters: int = 120
+
     # LLM 熔断降级：连续失败 fail_max 次 → 熔断 reset_sec 秒，期间快速失败/走 fallback。
     circuit_breaker_enabled: bool = True
     circuit_breaker_fail_max: int = 3

@@ -5,7 +5,9 @@ build_chat_session：组装前端 ChatSession（messages + steps 时间线 + too
 """
 from __future__ import annotations
 
+import json
 import re
+import time
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -152,3 +154,33 @@ def build_chat_session(db: Session, sess: AgentSession) -> ChatSession:
 def get_session_view(db: Session, session_id: int) -> ChatSession | None:
     sess = db.get(AgentSession, session_id)
     return build_chat_session(db, sess) if sess else None
+
+
+# 处理中的态（流式继续推送）；其余视为终态，推完即收尾
+_NON_TERMINAL = {"queued", "processing"}
+
+
+def stream_session_events(fetch_view, *, interval: float = 1.0, max_iters: int = 120,
+                          sleep=time.sleep):
+    """SSE 事件流：轮询会话视图，状态/回复/步骤一有变化就推一条 `data:`，终态后推 `done` 收尾。
+
+    把客户端轮询换成服务端推送（流式 UX），不改异步处理本身——进度仍由 worker 写库，
+    这里只负责"有变化就推、到终态就停"。fetch_view 每次须返回最新视图（见 stream endpoint：
+    每轮 expire 缓存重读，才看得到 worker 的提交）。max_iters 兜底防无限流。
+    """
+    last_sig = object()
+    for _ in range(max_iters):
+        view = fetch_view()
+        if view is None:
+            yield 'event: error\ndata: {"detail":"session not found"}\n\n'
+            return
+        d = view.model_dump(by_alias=True)
+        sig = (d.get("taskStatus"), d.get("latestReply"), len(d.get("steps") or []))
+        if sig != last_sig:                       # 仅在有变化时推，省带宽、前端好处理
+            yield f"data: {json.dumps(d, ensure_ascii=False, default=str)}\n\n"
+            last_sig = sig
+        if d.get("taskStatus") not in _NON_TERMINAL:
+            yield "event: done\ndata: {}\n\n"
+            return
+        sleep(interval)
+    yield "event: done\ndata: {}\n\n"             # 达上限也收尾

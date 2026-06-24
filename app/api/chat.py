@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -63,3 +64,19 @@ def get_session(session_id: int, db: Session = Depends(get_db)) -> ChatSession:
     if view is None:
         raise HTTPException(status_code=404, detail="session not found")
     return view
+
+
+@router.get("/session/{session_id}/stream")
+def stream_session(session_id: int, db: Session = Depends(get_db)) -> StreamingResponse:
+    """SSE 流式推送会话进度（替代轮询）：状态/思考步骤/回复有变化就推，终态收尾。"""
+    settings = get_settings()
+
+    def fetch():
+        db.expire_all()   # 丢身份映射缓存，强制重读 → 看到 worker 进程的提交
+        return chat_service.get_session_view(db, session_id)
+
+    gen = chat_service.stream_session_events(
+        fetch, interval=settings.sse_poll_interval_sec, max_iters=settings.sse_max_iters)
+    # X-Accel-Buffering: no → 关掉 nginx 缓冲，事件即时下发
+    return StreamingResponse(gen, media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
