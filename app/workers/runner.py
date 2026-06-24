@@ -11,7 +11,9 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.agent.context import AgentContext
+from app.agent.memory import apply_token_budget
 from app.agent.state_machine import States
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import AgentSession, Ticket, TicketMessage
 from app.llm.base import Msg
@@ -20,20 +22,27 @@ from app.tools.base import ToolContext
 
 logger = get_logger(__name__)
 
-# 对话记忆窗口（P1）：只取当前消息之前的最近 N 条历史，控 token；
-# 更长历史的摘要/向量检索留待 P4/P5（见 DECISIONS 记忆分层）。
-_HISTORY_MAX_MSGS = 20
+# 外层行上限：一次最多读这么多条进内存，再在其上按 token 预算切（P4 滚动摘要）。
+_HISTORY_MAX_ROWS = 100
 # 工单消息发送方 → LLM 对话角色：人工与 agent 同属 assistant 侧
 _ROLE_MAP = {"user": "user", "agent": "assistant", "human": "assistant", "system": "system"}
 
 
-def _load_history(db: Session, ticket_id: int, before_id: int) -> list[Msg]:
-    """加载本工单在当前消息之前的对话历史，转成 LLM 视角（P1 短期对话记忆）。"""
+def _load_history(db: Session, ticket_id: int, before_id: int,
+                  *, token_budget: int | None = None, llm=None) -> list[Msg]:
+    """加载本工单当前消息之前的历史，转 LLM 视角，并按 token 预算滚动摘要（P1+P4）。
+
+    最近若干条原样保留；超 token 预算的更早一段摘成一条前置消息（防溢出/防忘最初诉求）。
+    硬事实（order_id/金额）不靠这里——在 ticket/DB 查库（ADR-21）。
+    """
+    if token_budget is None:
+        token_budget = get_settings().history_token_budget
     rows = list(db.scalars(select(TicketMessage).where(
         TicketMessage.ticket_id == ticket_id,
         TicketMessage.id < before_id).order_by(TicketMessage.id)).all())
-    rows = rows[-_HISTORY_MAX_MSGS:]
-    return [Msg(role=_ROLE_MAP.get(m.sender_type, "user"), content=m.content) for m in rows]
+    rows = rows[-_HISTORY_MAX_ROWS:]
+    msgs = [Msg(role=_ROLE_MAP.get(m.sender_type, "user"), content=m.content) for m in rows]
+    return apply_token_budget(msgs, token_budget=token_budget, llm=llm)
 
 
 def task_status_for(state: str) -> str:
@@ -79,7 +88,8 @@ def run_agent_session(db: Session, session_id: int, agent=None,
         ctx = AgentContext(session_id=sess.id, ticket_id=sess.ticket_id,
                            user_id=sess.user_id, message=msg.content,
                            order_id=ticket.order_id, state=start_state,
-                           history=_load_history(db, sess.ticket_id, msg.id))
+                           history=_load_history(db, sess.ticket_id, msg.id,
+                                                 llm=getattr(agent, "llm", None)))
         decision = agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
 
         ticket_service.add_message(db, sess.ticket_id, "agent", decision.reply)

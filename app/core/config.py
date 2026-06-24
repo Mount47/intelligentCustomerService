@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     sse_poll_interval_sec: float = 1.0
     sse_max_iters: int = 120
 
+    # 长对话记忆（P4）：历史 token 预算，超出的旧段摘要压缩；防上下文溢出/成本失控
+    history_token_budget: int = 3000
+
     # LLM 熔断降级：连续失败 fail_max 次 → 熔断 reset_sec 秒，期间快速失败/走 fallback。
     circuit_breaker_enabled: bool = True
     circuit_breaker_fail_max: int = 3

@@ -1,7 +1,9 @@
-"""P1 对话记忆：runner 把本工单历史灌进 ctx.history，LLM 跨轮可见上下文。"""
+"""P1 对话记忆 + P4 长对话摘要：runner 灌历史进 ctx.history；超 token 预算的旧段摘要压缩。"""
 from app.agent.context import Decision
+from app.agent.memory import apply_token_budget, estimate_tokens, summarize_history
 from app.db.models import AgentSession, Ticket, TicketMessage, User
-from app.workers.runner import _HISTORY_MAX_MSGS, _load_history, run_agent_session
+from app.llm.base import LLMResponse, Msg
+from app.workers.runner import _load_history, run_agent_session
 
 
 def _mk(db, sender, content, user_id=None):
@@ -35,16 +37,31 @@ def test_load_history_maps_roles_and_excludes_current(db):
     assert [m.role for m in hist] == ["user", "assistant", "assistant"]  # 当前消息被排除
 
 
-def test_load_history_windowed(db):
+def test_load_history_within_budget_keeps_all(db):
     u, t = _conversation(db)
-    for i in range(_HISTORY_MAX_MSGS + 5):
-        _mk(db, "user", f"m{i}", u.id)
+    _mk(db, "user", "a", u.id)
+    _mk(db, "agent", "b")
     cur = TicketMessage(ticket_id=t.id, user_id=u.id, sender_type="user", content="cur")
     db.add(cur)
     db.flush()
-    hist = _load_history(db, t.id, cur.id)
-    assert len(hist) == _HISTORY_MAX_MSGS                 # 只保留最近 N 条
-    assert hist[-1].content == f"m{_HISTORY_MAX_MSGS + 4}"  # 截掉最早的
+    hist = _load_history(db, t.id, cur.id, token_budget=1000)   # 远超 → 不摘要
+    assert [m.content for m in hist] == ["a", "b"]
+    assert not hist[0].content.startswith("[早期对话摘要]")
+
+
+def test_load_history_summarizes_old_when_over_budget(db):
+    u, t = _conversation(db)
+    for i in range(10):
+        _mk(db, "user", f"message-{i}", u.id)   # 每条 9 字符
+    cur = TicketMessage(ticket_id=t.id, user_id=u.id, sender_type="user", content="cur")
+    db.add(cur)
+    db.flush()
+    # 预算 20 字符 → 只够最近 2 条(message-8/9)，更早 8 条摘成一条前置消息(llm=None 走模板)
+    hist = _load_history(db, t.id, cur.id, token_budget=20)
+    assert hist[0].role == "user" and hist[0].content.startswith("[早期对话摘要]")
+    assert "早期对话" in hist[0].content
+    assert hist[-1].content == "message-9"          # 最新一条一定原样保留
+    assert "message-0" not in [m.content for m in hist[1:]]  # 最早的被折叠进摘要
 
 
 class _CapturingAgent:
@@ -76,3 +93,32 @@ def test_run_agent_session_feeds_prior_turns(db):
     assert agent.message == "我买了什么"
     assert [m.content for m in agent.history] == ["我买了一件衣服", "好的"]
     assert [m.role for m in agent.history] == ["user", "assistant"]
+
+
+# ---- memory 模块单元 ----
+
+class _FakeLLM:
+    model_name = "fake"
+
+    def chat(self, *, system, messages, tools=None, stream=False):
+        return LLMResponse(text="用户要退款订单X，已建草稿")
+
+
+def test_apply_token_budget_keeps_newest_even_if_over():
+    msgs = [Msg("user", "x" * 100)]          # 单条就超预算
+    out = apply_token_budget(msgs, token_budget=10)
+    assert out == msgs                        # 至少保留最新 1 条，不丢当前上下文
+
+
+def test_summarize_history_uses_llm_when_available():
+    msgs = [Msg("user", "我要退款"), Msg("assistant", "好的")]
+    assert summarize_history(msgs, llm=_FakeLLM()) == "用户要退款订单X，已建草稿"
+
+
+def test_summarize_history_template_fallback_without_llm():
+    out = summarize_history([Msg("user", "你好")], llm=None)
+    assert "早期对话" in out                   # 无 LLM → 确定性模板，CI 可复现
+
+
+def test_estimate_tokens_conservative():
+    assert estimate_tokens("abcd") == 4 and estimate_tokens("") == 1
