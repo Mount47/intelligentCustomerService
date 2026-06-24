@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
 from app.agent.guardrails import FORBIDDEN_PHRASES
-from app.db.models import AgentToolCall, Base, Logistics, Order, User
+from app.db.models import AgentToolCall, Base, Logistics, Order, RefundRequest, User
 from app.eval.judge import build_judge
 from app.eval.metrics import summarize
 from app.schemas.chat import ChatMessageIn
@@ -86,46 +86,66 @@ def evaluate(real: bool = False, judge_real: bool = False) -> tuple[dict, list[d
             order_id = None
             if c.get("order") is not None:
                 order_id = _make_order(db, main.id, other.id, c["order"], c["case_id"])
-            sess, _ = chat_service.accept_message(
-                db, ChatMessageIn(user_id=main.id, content=c["user_message"], order_id=order_id))
-            run_agent_session(db, sess.id, agent=agent)
-            view = chat_service.get_session_view(db, sess.id)
-
-            reply = view.latest_reply or ""
-            forbidden = list(c.get("forbidden_phrases", [])) + list(FORBIDDEN_PHRASES)
-            hits = [p for p in forbidden if p in reply]
-            pred_handoff = view.final_status == "need_human"
-            calls_total = db.scalar(select(func.count()).select_from(AgentToolCall)
-                                    .where(AgentToolCall.session_id == sess.id)) or 0
-            calls_ok = db.scalar(select(func.count()).select_from(AgentToolCall)
-                                 .where(AgentToolCall.session_id == sess.id,
-                                        AgentToolCall.success.is_(True))) or 0
-
-            r = {
-                "case_id": c["case_id"],
-                "adversarial": bool(c.get("adversarial")),
-                "should_handoff": c.get("should_handoff", False),
-                # 支持一组可接受意图（Agent 的"对"未必唯一，见 oos-1）
-                "intent_ok": view.current_intent in (c.get("accept_intents") or [c["expected_intent"]]),
-                "skill_ok": view.current_skill == c["expected_skill"],
-                "state_ok": view.final_status == c["expected_final_status"],
-                "handoff_ok": pred_handoff == c.get("should_handoff", False),
-                "forbidden_hits": hits,
-                "tool_calls_total": calls_total,
-                "tool_calls_ok": calls_ok,
-                "total_tokens": view.token_usage.total_tokens,
-                "cost": view.token_usage.estimated_cost,
-                "final_status": view.final_status,
-                "predicted": {"intent": view.current_intent, "skill": view.current_skill,
-                              "state": view.final_status},
-                "expected": {"intent": c["expected_intent"], "skill": c["expected_skill"],
-                             "state": c["expected_final_status"]},
-            }
-            # 第二层：质量打分（stub 据上面的断言信号折算；real 读 reply 做语义评分）
-            r["judge"] = judge.score(c, reply, r)
-            results.append(r)
+            # 单轮 case 视作 1 轮；多轮 case 用 turns 列表，同一 ticket 顺序跑（验确认流/去重/续接）
+            turns = c.get("turns") or [c]
+            ticket_id = None
+            for ti, turn in enumerate(turns):
+                exp = {**c, **turn}   # turn 字段覆盖 case 级默认
+                tag = c["case_id"] if len(turns) == 1 else f"{c['case_id']}#t{ti + 1}"
+                r, ticket_id = _eval_turn(db, agent, judge, exp, tag, main.id,
+                                          order_id, ticket_id)
+                results.append(r)
 
     return summarize(results), results
+
+
+def _eval_turn(db, agent, judge, exp: dict, tag: str, user_id: int,
+               order_id: int | None, ticket_id: int | None):
+    """跑一轮对话并产出一行结果。期望字段缺省即不断言（多轮里某些轮只关心 state）。"""
+    sess, _ = chat_service.accept_message(db, ChatMessageIn(
+        user_id=user_id, content=exp["user_message"], order_id=order_id, ticket_id=ticket_id))
+    run_agent_session(db, sess.id, agent=agent)
+    view = chat_service.get_session_view(db, sess.id)
+
+    reply = view.latest_reply or ""
+    forbidden = list(exp.get("forbidden_phrases", [])) + list(FORBIDDEN_PHRASES)
+    hits = [p for p in forbidden if p in reply]
+    pred_handoff = view.final_status == "need_human"
+    calls_total = db.scalar(select(func.count()).select_from(AgentToolCall)
+                            .where(AgentToolCall.session_id == sess.id)) or 0
+    calls_ok = db.scalar(select(func.count()).select_from(AgentToolCall)
+                         .where(AgentToolCall.session_id == sess.id,
+                                AgentToolCall.success.is_(True))) or 0
+    # 期望缺省 → 该项不参与判定（视为通过），让多轮里只关心状态的轮不被强判意图/技能
+    accept = exp.get("accept_intents") or ([exp["expected_intent"]] if "expected_intent" in exp else None)
+    # 会话级去重硬验：跑完本轮后【本订单】的退款单数应等于期望（防同订单重复建草稿）。
+    # 按 order_id 过滤而非 user_id——评测共用一个 main 用户跨 case，按用户数会串。
+    refund_count = db.scalar(select(func.count()).select_from(RefundRequest)
+                             .where(RefundRequest.order_id == order_id)) or 0
+    count_ok = ("expected_refund_count" not in exp) or (refund_count == exp["expected_refund_count"])
+
+    r = {
+        "case_id": tag,
+        "adversarial": bool(exp.get("adversarial")),
+        "should_handoff": exp.get("should_handoff", False),
+        "intent_ok": accept is None or view.current_intent in accept,
+        "skill_ok": "expected_skill" not in exp or view.current_skill == exp["expected_skill"],
+        "state_ok": "expected_final_status" not in exp or view.final_status == exp["expected_final_status"],
+        "handoff_ok": pred_handoff == exp.get("should_handoff", False),
+        "count_ok": count_ok,
+        "forbidden_hits": hits,
+        "tool_calls_total": calls_total,
+        "tool_calls_ok": calls_ok,
+        "total_tokens": view.token_usage.total_tokens,
+        "cost": view.token_usage.estimated_cost,
+        "final_status": view.final_status,
+        "predicted": {"intent": view.current_intent, "skill": view.current_skill,
+                      "state": view.final_status},
+        "expected": {"intent": exp.get("expected_intent"), "skill": exp.get("expected_skill"),
+                     "state": exp.get("expected_final_status")},
+    }
+    r["judge"] = judge.score(exp, reply, r)
+    return r, sess.ticket_id
 
 
 def main() -> int:
@@ -135,7 +155,7 @@ def main() -> int:
 
     fails = [r for r in results
              if not (r["intent_ok"] and r["skill_ok"] and r["state_ok"]
-                     and r["handoff_ok"] and not r["forbidden_hits"])]
+                     and r["handoff_ok"] and r.get("count_ok", True) and not r["forbidden_hits"])]
     jt = "REAL" if judge_real else "STUB"
     print(f"\n=== 评测 (agent={'REAL' if real else 'STUB'} / judge={jt}) — {summary['cases']} cases ===")
     for k, v in summary.items():
