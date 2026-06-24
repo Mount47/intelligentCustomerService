@@ -38,6 +38,11 @@ async function withFallback<T>(realCall: () => Promise<T>, mockCall: () => Promi
 }
 
 export const api = {
+  useMock: USE_MOCK,
+  // SSE 流式端点 URL（EventSource 用）；mock 模式下前端会退回轮询
+  streamSessionUrl(id: string): string {
+    return `${API_BASE}/chat/session/${id}/stream`;
+  },
   sendMessage(payload: SendMessageRequest): Promise<SendMessageResponse> {
     return withFallback(
       () => request<SendMessageResponse>("/chat/message", { method: "POST", body: JSON.stringify(payload) }),

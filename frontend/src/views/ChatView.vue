@@ -11,11 +11,13 @@ const ticketId = ref<string | undefined>(undefined);   // 同一对话续接的�
 const loading = ref(false);
 const sending = ref(false);
 const error = ref("");
+const streaming = ref(false);   // 是否正经由 SSE 实时接收
 let pollTimer: number | undefined;
+let es: EventSource | undefined;
 
 // 新对话：丢弃当前工单与会话，下一条消息会新建工单
 function newConversation() {
-  stopPoll();
+  stopStream();
   ticketId.value = undefined;
   session.value = null;
   error.value = "";
@@ -65,6 +67,43 @@ function stopPoll() {
   pollTimer = undefined;
 }
 
+// 优先用 SSE 实时接收进度；mock/不支持/连接异常 → 退回轮询，保证仍拿得到结果
+function startStream(id: string) {
+  stopStream();
+  if (api.useMock || typeof EventSource === "undefined") {
+    void refreshSession(id);   // 退回轮询
+    return;
+  }
+  loading.value = true;
+  let gotData = false;
+  const source = new EventSource(api.streamSessionUrl(id));
+  es = source;
+  streaming.value = true;
+  source.onmessage = (ev) => {            // 每条 data: 推送 → 整份会话视图
+    gotData = true;
+    loading.value = false;
+    try { session.value = JSON.parse(ev.data) as ChatSession; } catch { /* 忽略坏帧 */ }
+  };
+  source.addEventListener("done", () => { // 终态收尾：主动关闭，避免 EventSource 自动重连
+    source.close();
+    if (es === source) { es = undefined; streaming.value = false; }
+    loading.value = false;
+  });
+  source.onerror = () => {                 // 连接异常：关闭并退回轮询（仅在没拿到数据时）
+    source.close();
+    if (es === source) { es = undefined; streaming.value = false; }
+    loading.value = false;
+    if (!gotData) void refreshSession(id);
+  };
+}
+
+function stopStream() {
+  es?.close();
+  es = undefined;
+  streaming.value = false;
+  stopPoll();
+}
+
 async function submitMessage() {
   const content = input.value.trim();
   if (!content || sending.value) return;
@@ -80,7 +119,7 @@ async function submitMessage() {
     });
     ticketId.value = response.ticketId ?? ticketId.value;   // 记住工单，供下一轮续接
     input.value = "";
-    await refreshSession(response.sessionId);
+    startStream(response.sessionId);        // SSE 实时接收（失败自动退回轮询）
   } catch (err) {
     error.value = err instanceof Error ? err.message : "发送失败";
   } finally {
@@ -88,7 +127,7 @@ async function submitMessage() {
   }
 }
 
-onBeforeUnmount(stopPoll);
+onBeforeUnmount(stopStream);
 </script>
 
 <template>
@@ -116,7 +155,7 @@ onBeforeUnmount(stopPoll);
           <div v-if="!session" class="empty-state">
             <el-icon><Message /></el-icon>
             <strong>输入一个售后问题开始演示</strong>
-            <span>前端会轮询 `GET /chat/session/{id}`，逐步点亮 Agent 决策轨迹。</span>
+            <span>前端通过 SSE 实时接收处理进度，逐步点亮 Agent 决策轨迹（异常自动退回轮询）。</span>
           </div>
           <article
             v-for="message in session?.messages ?? []"
@@ -151,7 +190,8 @@ onBeforeUnmount(stopPoll);
         <div class="panel-title">
           <el-icon><Cpu /></el-icon>
           <span>思考过程</span>
-          <el-tag v-if="isPolling" size="small" type="warning">轮询中</el-tag>
+          <el-tag v-if="streaming" size="small" type="success">实时流式</el-tag>
+          <el-tag v-else-if="isPolling" size="small" type="warning">轮询中</el-tag>
         </div>
         <el-timeline>
           <el-timeline-item
