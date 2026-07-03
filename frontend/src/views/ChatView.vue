@@ -4,7 +4,16 @@ import { CircleCheck, Clock, Cpu, Message, Plus, RefreshRight, Warning } from "@
 import { api } from "../api/client";
 import type { AgentTimelineStep, ChatSession, TaskStatus } from "../api/types";
 
-const userId = ref("11");   // seed 的 demo 用户；订单号见 seed_data 对照表
+// 模拟登录账号（对应 seed_data / seed_bulk 造的用户）；真实产品应替换为登录鉴权
+const demoAccounts = [
+  { id: "11", label: "demo（场景订单专用，见 seed_data 对照表）" },
+  { id: "13", label: "bulk_user001" },
+  { id: "14", label: "bulk_user002" },
+  { id: "15", label: "bulk_user003（VIP）" },
+  { id: "16", label: "bulk_user004" },
+  { id: "18", label: "bulk_user006（VIP）" }
+];
+const userId = ref(demoAccounts[0].id);
 const input = ref("我要退款 订单 DEMO-REFUND-LOW");
 const session = ref<ChatSession | null>(null);
 const ticketId = ref<string | undefined>(undefined);   // 同一对话续接的工单 id（P1 对话记忆）
@@ -134,7 +143,7 @@ onBeforeUnmount(stopStream);
   <section class="workspace chat-layout">
     <header class="page-head">
       <div>
-        <p class="eyebrow">用户端 /chat</p>
+        <p class="eyebrow">用户端 /chat · 模拟登录（演示用，非真实鉴权）</p>
         <h1>售后对话</h1>
       </div>
       <el-button :icon="Plus" plain size="small" @click="newConversation">新对话</el-button>
@@ -171,7 +180,9 @@ onBeforeUnmount(stopStream);
         </div>
 
         <form class="composer" @submit.prevent="submitMessage">
-          <el-input v-model="userId" class="user-input" aria-label="用户 ID" />
+          <el-select v-model="userId" class="user-input" aria-label="模拟登录账号">
+            <el-option v-for="acc in demoAccounts" :key="acc.id" :label="acc.label" :value="acc.id" />
+          </el-select>
           <el-input
             v-model="input"
             type="textarea"

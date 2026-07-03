@@ -16,6 +16,7 @@ RUN uv pip install --system --no-cache .
 
 # 再拷代码
 COPY app ./app
+COPY scripts ./scripts
 
 EXPOSE 8000
 
