@@ -5,7 +5,7 @@ from app.agent.context import AgentContext, Decision, SkillPlan
 from app.agent.intent_classifier import Intents
 from app.agent.state_machine import States
 from app.core.config import get_settings
-from app.services import logistics_service, ticket_service
+from app.services import logistics_service, order_service, ticket_service
 
 _SYSTEM = (
     "你是物流助手。可调用只读工具查询物流状态与异常，向用户说明；"
@@ -36,6 +36,13 @@ class LogisticsExceptionSkill:
         stale_hours = get_settings().logistics_stale_hours
         exc = logistics_service.detect_exception(db, ctx.order_id, stale_hours)
         if not exc.get("found"):
+            order = order_service.get_order(db, ctx.order_id)
+            # 未发货（待付款/已付款）本就没有物流记录，是正常状态，不是异常
+            if order is not None and order.status in ("pending_payment", "paid"):
+                return Decision("您的订单已付款，正在备货中，暂未发货，发货后会同步物流信息。",
+                                States.RESOLVED_BY_AGENT)
+            if order is not None and order.status == "cancelled":
+                return Decision("该订单已取消，不涉及物流。", States.RESOLVED_BY_AGENT)
             return Decision("暂未查询到该订单的物流信息，已为您转人工核实。", States.NEED_HUMAN,
                             need_handoff=True, handoff_reason="logistics_not_found")
 
