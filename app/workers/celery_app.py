@@ -2,6 +2,8 @@
 
 M1 仅建实例 + 一个 ping 任务验证 worker 起得来；
 process_agent_message 在 M6 落（agent_tasks.py）。
+`include` 声明任务模块，worker 启动时加载并注册 agent.process_message，
+否则 worker 收到该任务会因未注册而丢弃（KeyError: 'agent.process_message'）。
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ celery_app = Celery(
     "supportflow",
     broker=_settings.celery_broker_url,
     backend=_settings.celery_result_backend,
+    include=["app.workers.agent_tasks"],
 )
 
 celery_app.conf.update(
