@@ -22,7 +22,7 @@ _SYSTEM = (
     "你是电商退款助手。可调用只读工具核对订单与政策，向用户解释处理依据；"
     "不得承诺一定退款/赔偿，不得绕过订单校验，不得编造结果。最终退款由系统按政策处理。"
 )
-_READ_TOOLS = ["get_order_detail", "check_refund_policy", "search_policy_docs"]
+_READ_TOOLS = ["get_order_detail", "check_refund_policy", "search_policy_docs", "get_order_refund"]
 _PENDING_TTL = 3600          # 待确认动作有效期（秒），过期需重新发起
 _NEW_REFUND_INTENTS = {Intents.REFUND_REQUEST, Intents.RETURN_REQUEST}
 

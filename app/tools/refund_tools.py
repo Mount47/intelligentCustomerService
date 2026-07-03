@@ -32,6 +32,16 @@ def get_refund_status(ctx: ToolContext, refund_id: int):
         return err("refund_not_found", "退款单不存在")
     return ok(res)
 
+def get_order_refund(ctx: ToolContext, order_id: int, user_id: int):
+    # 1. 调 refund_service.get_active_refund(ctx.db, user_id, order_id) → 拿到 rr(对象 或 None)
+    # 2. 若 rr is None → 这单没有进行中的退款,return ok({...一个表示"无"的 dict...})
+    # 3. 否则 → 把 rr 拼成 dict(用 rr.id / rr.status / float(rr.amount)),再 return ok(那个dict)
+
+    rr = refund_service.get_active_refund(ctx.db, user_id, order_id)
+    if rr is None:
+        return ok({"refund_request_id": None, "status": "none", "amount": 0.0})
+    return ok({"refund_request_id": rr.id, "status": rr.status, "amount": float(rr.amount)})
+
 
 TOOLS = [
     RegisteredTool("check_refund_policy", "核对退款资格/风险/是否需人工，引用政策。",
@@ -50,4 +60,8 @@ TOOLS = [
     RegisteredTool("get_refund_status", "查询退款单状态。",
                    {"type": "object", "properties": {"refund_id": {"type": "integer"}},
                     "required": ["refund_id"]}, get_refund_status),
+    RegisteredTool("get_order_refund", "查询订单的退款单。",
+                   {"type": "object", "properties": {"order_id": {"type": "integer"},
+                                                      "user_id": {"type": "integer"}},
+                    "required": ["order_id", "user_id"]}, get_order_refund),
 ]
