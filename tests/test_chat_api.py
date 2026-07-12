@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
+from app.core.exceptions import ResourceAccessDenied
 from app.db.models import Base, RefundRequest, TicketMessage, User
 from app.db.session import get_db
 from app.main import app
@@ -132,3 +133,27 @@ def test_order_in_text_enters_confirm(db, user_order):
     db.refresh(sess)
     # 文本解析到订单→进入待确认（而非"请补充订单号"）
     assert sess.final_status == "waiting_user_confirm"
+
+
+def test_accept_message_rejects_other_users_order(db, user_order):
+    owner, order = user_order
+    attacker = User(username="mallory")
+    db.add(attacker)
+    db.flush()
+
+    with pytest.raises(ResourceAccessDenied):
+        chat_service.accept_message(
+            db, ChatMessageIn(user_id=attacker.id, content="查订单", order_id=order.id))
+
+
+def test_accept_message_rejects_other_users_ticket(db, user_order):
+    owner, order = user_order
+    sess, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=owner.id, content="查订单", order_id=order.id))
+    attacker = User(username="mallory")
+    db.add(attacker)
+    db.flush()
+
+    with pytest.raises(ResourceAccessDenied):
+        chat_service.accept_message(
+            db, ChatMessageIn(user_id=attacker.id, content="追加消息", ticket_id=sess.ticket_id))

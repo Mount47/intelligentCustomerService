@@ -49,6 +49,15 @@ def test_can_i_refund_is_inquiry_not_request():
     assert r.action_type == ActionType.QUERY
 
 
+def test_refund_question_words_are_inquiry():
+    """常见疑问词不能因包含“退款”而误入申请流程。"""
+    for text in ("退款什么时候到账", "退款要多久", "退款怎么办", "退款需要什么条件"):
+        r = clf.classify_intent(text)
+        assert r.intent == Intents.REFUND_INQUIRY, f"{text} -> {r.intent.value}"
+        assert r.action_type == ActionType.QUERY
+        assert r.requires_confirmation is False
+
+
 def test_affirmative_refund_is_request_requires_confirm():
     # 我要退款 → 肯定 → refund_request，需确认（关键词不直接触发建草稿）
     r = clf.classify_intent("我要退款")
@@ -70,6 +79,20 @@ def test_out_of_scope_detected():
     # 明确超范围 → out_of_scope（供 handle 做 scope 硬闸）
     assert clf.classify_intent("今天天气怎么样").intent == Intents.OUT_OF_SCOPE
     assert clf.classify_intent("给我讲个笑话").intent == Intents.OUT_OF_SCOPE
+    # “证券”含宽泛优惠券关键词“券”，scope 硬闸必须先判断。
+    assert clf.classify_intent("证券行情怎么样").intent == Intents.OUT_OF_SCOPE
+
+
+def test_negated_handoff_does_not_beat_real_intent():
+    r = clf.classify_intent("别转人工，我只想查物流")
+    assert r.intent == Intents.LOGISTICS_QUERY
+
+
+def test_multiple_rule_candidates_require_disambiguation_without_llm():
+    r = clf.classify_intent("物流一直没收到，我还想退款")
+    assert r.intent == Intents.GENERAL_POLICY_QUERY
+    assert r.confidence == Confidence.LOW
+    assert "多个冲突候选" in r.reason
 
 
 def test_bare_confirmation_without_context_is_not_confirmation():
@@ -113,10 +136,42 @@ def test_llm_defer_uses_history_on_recall_miss():
     hist = [Msg("user", "我买了件衣服"), Msg("assistant", "好的")]
     r = clf2.classify_intent("这个我用不上了想处理掉", history=hist)   # 无关键词→miss→defer
     assert r.intent == Intents.RETURN_REQUEST
+    assert r.polarity == Polarity.POSITIVE
+    assert r.action_type == ActionType.EXECUTE
+    assert r.requires_confirmation is True
     assert r.reason.startswith("LLM 语义兜底")
     # 历史被带上 + 当前消息在最后
     assert captured["messages"][0].content == "我买了件衣服"
     assert captured["messages"][-1].content.endswith("处理掉")
+
+
+def test_llm_disambiguates_only_among_recalled_candidates():
+    from app.llm.base import LLMResponse, Usage
+
+    class FakeLLM:
+        model_name = "fake"
+
+        def chat(self, *, system, messages, tools=None, stream=False):
+            assert "logistics_exception" in system and "refund_request" in system
+            return LLMResponse(text='{"intent": "logistics_exception"}', usage=Usage())
+
+    r = HybridIntentClassifier(llm=FakeLLM()).classify_intent("物流没收到，我还想退款")
+    assert r.intent == Intents.LOGISTICS_EXCEPTION
+    assert r.confidence == Confidence.MEDIUM
+
+
+def test_llm_explanatory_or_multi_label_output_is_rejected():
+    from app.llm.base import LLMResponse, Usage
+
+    class BadLLM:
+        model_name = "fake"
+
+        def chat(self, *, system, messages, tools=None, stream=False):
+            return LLMResponse(text="not refund_request, choose refund_inquiry", usage=Usage())
+
+    r = HybridIntentClassifier(llm=BadLLM()).classify_intent("这个该怎么处理")
+    assert r.intent == Intents.GENERAL_POLICY_QUERY
+    assert r.requires_confirmation is False
 
 
 def test_intents_is_str_enum_backward_compatible():

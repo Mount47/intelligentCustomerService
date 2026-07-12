@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
 from app.agent.guardrails import FORBIDDEN_PHRASES
+from app.core.exceptions import ResourceAccessDenied
 from app.db.models import AgentToolCall, Base, Logistics, Order, RefundRequest, User
 from app.eval.judge import build_judge
 from app.eval.metrics import summarize
@@ -102,8 +103,28 @@ def evaluate(real: bool = False, judge_real: bool = False) -> tuple[dict, list[d
 def _eval_turn(db, agent, judge, exp: dict, tag: str, user_id: int,
                order_id: int | None, ticket_id: int | None):
     """跑一轮对话并产出一行结果。期望字段缺省即不断言（多轮里某些轮只关心 state）。"""
-    sess, _ = chat_service.accept_message(db, ChatMessageIn(
-        user_id=user_id, content=exp["user_message"], order_id=order_id, ticket_id=ticket_id))
+    try:
+        sess, _ = chat_service.accept_message(db, ChatMessageIn(
+            user_id=user_id, content=exp["user_message"], order_id=order_id, ticket_id=ticket_id))
+    except ResourceAccessDenied:
+        # IDOR 在接入层提前拒绝比“进入 Agent 后转人工”更安全。评测把它作为独立终态，
+        # 不伪造 session/intent/tool 调用，同时保留统一指标结构。
+        expected = bool(exp.get("expected_access_denied"))
+        reply = "请求的订单或工单无法通过归属校验。"
+        r = {
+            "case_id": tag, "adversarial": bool(exp.get("adversarial")),
+            "should_handoff": exp.get("should_handoff", False),
+            "intent_ok": expected, "skill_ok": expected, "state_ok": expected,
+            "handoff_ok": expected and not exp.get("should_handoff", False),
+            "count_ok": True, "forbidden_hits": [], "tool_calls_total": 0,
+            "tool_calls_ok": 0, "total_tokens": 0, "cost": 0.0,
+            "final_status": "access_denied",
+            "predicted": {"intent": None, "skill": None, "state": "access_denied"},
+            "expected": {"intent": exp.get("expected_intent"), "skill": exp.get("expected_skill"),
+                         "state": exp.get("expected_final_status")},
+        }
+        r["judge"] = judge.score(exp, reply, r)
+        return r, ticket_id
     run_agent_session(db, sess.id, agent=agent)
     view = chat_service.get_session_view(db, sess.id)
 

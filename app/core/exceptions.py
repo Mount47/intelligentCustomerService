@@ -9,6 +9,13 @@ class SupportFlowError(Exception):
     http_status = 500
 
 
+class ResourceAccessDenied(SupportFlowError):
+    """请求引用了不属于当前用户的订单或工单。"""
+
+    code = "resource_access_denied"
+    http_status = 403
+
+
 class InvalidStateTransition(SupportFlowError):
     """工单状态机非法转移（§7）。"""
 

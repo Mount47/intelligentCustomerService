@@ -12,7 +12,7 @@ import time
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import SupportFlowError
+from app.core.exceptions import ResourceAccessDenied, SupportFlowError
 from app.db.models import AgentSession, AgentToolCall, Order, Ticket, TicketMessage
 from app.schemas.chat import (
     AgentTimelineStep,
@@ -73,12 +73,20 @@ def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, b
 
     # 2 建/取 ticket（order_id 优先用入参，否则从消息文本解析）
     order_id = payload.order_id
+    if order_id is not None:
+        order = db.get(Order, order_id)
+        if order is None or order.user_id != payload.user_id:
+            raise ResourceAccessDenied("order does not belong to user")
     if order_id is None:
         order_id = resolve_order_from_text(db, payload.user_id, payload.content)
     if payload.ticket_id is not None:
         ticket = db.get(Ticket, payload.ticket_id)
         if ticket is None:
             raise SupportFlowError("ticket not found")
+        if ticket.user_id != payload.user_id:
+            raise ResourceAccessDenied("ticket does not belong to user")
+        if order_id is not None and ticket.order_id not in (None, order_id):
+            raise ResourceAccessDenied("ticket is already bound to another order")
         if ticket.order_id is None and order_id is not None:
             ticket.order_id = order_id     # 多轮：补上后续消息里给出的订单
     else:
