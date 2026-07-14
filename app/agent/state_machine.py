@@ -39,7 +39,11 @@ TRANSITIONS: dict[str, set[str]] = {
         States.NEED_HUMAN, States.RESOLVED_BY_AGENT,
         States.USER_ANGRY, States.WAITING_USER_CONFIRM,   # 退款请求→待用户确认
     },
-    States.INFO_REQUIRED: {States.INFO_COLLECTED, States.NEED_HUMAN, States.CLOSED},
+    States.INFO_REQUIRED: {
+        States.INFO_REQUIRED,     # 无效补充→继续追问
+        States.INFO_COLLECTED, States.INTENT_DETECTED,  # 补齐 / 明确新意图打断
+        States.NEED_HUMAN, States.CLOSED,
+    },
     States.INFO_COLLECTED: {States.TOOL_EXECUTING, States.NEED_HUMAN},
     States.TOOL_EXECUTING: {
         States.WAITING_USER_CONFIRM, States.RESOLVED_BY_AGENT,

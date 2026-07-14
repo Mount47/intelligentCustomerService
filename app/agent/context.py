@@ -92,6 +92,7 @@ class AgentContext:
     token_acct: TokenAcct = field(default_factory=TokenAcct)
     decision: "Decision | None" = None
     intent_result: "IntentResult | None" = None   # 结构化意图（极性/动作/置信/需确认）
+    pending_context: dict | None = None            # INFO_REQUIRED 跨轮意图/槽位上下文
 
 
 class Skill(Protocol):

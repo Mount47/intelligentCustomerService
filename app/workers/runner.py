@@ -82,12 +82,16 @@ def run_agent_session(db: Session, session_id: int, agent=None,
             from app.llm.registry import build_llm_client
             agent = build_default_agent(build_llm_client())
 
-        # 跨轮状态：仅"等待确认"态需续接（其余 new message 视为新请求，从 CREATED 起）
-        start_state = (States.WAITING_USER_CONFIRM
-                       if ticket.status == States.WAITING_USER_CONFIRM else None)
+        # 跨轮状态：确认协议与待补槽位都需恢复；其他状态的新消息视为新请求。
+        resumable = {
+            States.WAITING_USER_CONFIRM,
+            States.INFO_REQUIRED,
+        }
+        start_state = ticket.status if ticket.status in resumable else None
         ctx = AgentContext(session_id=sess.id, ticket_id=sess.ticket_id,
                            user_id=sess.user_id, message=msg.content,
                            order_id=ticket.order_id, state=start_state,
+                           pending_context=ticket.pending_context,
                            history=_load_history(db, sess.ticket_id, msg.id,
                                                  llm=getattr(agent, "llm", None)))
         decision = agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
@@ -106,6 +110,7 @@ def run_agent_session(db: Session, session_id: int, agent=None,
         sess.cache_hit = acct.cache_hit
         sess.task_status = task_status_for(ctx.state)
         ticket.status = ctx.state  # 工单状态由 agent 最终态驱动
+        ticket.pending_context = ctx.pending_context
         if ctx.state == States.RESOLVED_BY_AGENT:   # 解决 → 回填 SLA(闭环)；转人工/等待态留给后续
             sla_service.mark_resolved(db, sess.ticket_id)
     except Exception as exc:  # noqa: BLE001 — 异步任务不崩

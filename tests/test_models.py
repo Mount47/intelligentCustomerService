@@ -1,6 +1,6 @@
 """M2 模型测试：建表 + 退款双唯一约束 + 消息幂等。用内存 sqlite，不依赖 postgres。"""
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -12,6 +12,7 @@ from app.db.models import (
     TicketMessage,
     User,
 )
+from app.db.init_db import ensure_mvp_schema_compat
 
 
 @pytest.fixture
@@ -79,3 +80,15 @@ def test_message_idempotency(db):
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
+
+
+def test_mvp_schema_compat_adds_pending_context_to_existing_ticket_table():
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE tickets (id INTEGER PRIMARY KEY)"))
+
+    ensure_mvp_schema_compat(engine)
+    ensure_mvp_schema_compat(engine)  # 幂等：重复初始化不应再次 ALTER
+
+    columns = {c["name"] for c in inspect(engine).get_columns("tickets")}
+    assert "pending_context" in columns

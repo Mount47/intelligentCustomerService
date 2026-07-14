@@ -167,6 +167,9 @@ class Ticket(Base):
     # 待确认的高危动作（如待确认的退款）。{type, order_id, amount, created_at}；
     # 进 waiting_user_confirm 时写、确认/取消后清。跨轮持久化确认上下文（防"确认"误触发）。
     pending_action: Mapped[Optional[dict]] = mapped_column(JSON)
+    # 待补信息上下文。与 pending_action 分开：前者恢复意图/Skill/槽位，后者绑定高危确认动作。
+    # {intent, skill, required_slots, collected_slots, intent_result, created_at}
+    pending_context: Mapped[Optional[dict]] = mapped_column(JSON)
     created_by_agent: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否 Agent 自动创建，统计自动化率
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

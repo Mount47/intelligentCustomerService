@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
 from app.core.exceptions import ResourceAccessDenied
-from app.db.models import Base, RefundRequest, TicketMessage, User
+from app.db.models import Base, RefundRequest, Ticket, TicketMessage, User
 from app.db.session import get_db
 from app.main import app
 from app.schemas.chat import ChatMessageIn
@@ -157,3 +157,121 @@ def test_accept_message_rejects_other_users_ticket(db, user_order):
     with pytest.raises(ResourceAccessDenied):
         chat_service.accept_message(
             db, ChatMessageIn(user_id=attacker.id, content="追加消息", ticket_id=sess.ticket_id))
+
+
+# ---------- INFO_REQUIRED 跨轮槽位续接 ----------
+def test_refund_missing_order_resumes_after_order_number(db, user_order):
+    u, o = user_order
+    first, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我要退款"))
+    run_agent_session(db, first.id, agent=build_default_agent())
+    ticket = db.get(Ticket, first.ticket_id)
+    assert ticket.status == "info_required"
+    assert ticket.pending_context["intent"] == "refund_request"
+    assert ticket.pending_context["required_slots"] == ["order_id"]
+
+    second, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content=o.order_no, ticket_id=ticket.id))
+    run_agent_session(db, second.id, agent=build_default_agent())
+    db.refresh(second)
+    db.refresh(ticket)
+
+    assert second.current_intent == "refund_request"
+    assert second.final_status == "waiting_user_confirm"
+    assert ticket.order_id == o.id
+    assert ticket.pending_context is None
+    assert ticket.pending_action and ticket.pending_action["order_id"] == o.id
+    assert db.query(RefundRequest).count() == 0
+
+
+def test_logistics_missing_order_resumes_after_order_number(db, user_order):
+    u, o = user_order  # paid 且无物流 → 确定性播报备货中
+    first, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="帮我查物流"))
+    run_agent_session(db, first.id, agent=build_default_agent())
+    ticket = db.get(Ticket, first.ticket_id)
+    assert ticket.pending_context["intent"] == "logistics_query"
+
+    second, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content=f"订单 {o.order_no}", ticket_id=ticket.id))
+    run_agent_session(db, second.id, agent=build_default_agent())
+    db.refresh(second)
+    db.refresh(ticket)
+
+    assert second.current_intent == "logistics_query"
+    assert second.final_status == "resolved_by_agent"
+    assert ticket.pending_context is None
+
+
+def test_explicit_new_intent_interrupts_pending_refund(db, user_order):
+    u, o = user_order
+    first, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我要退款"))
+    run_agent_session(db, first.id, agent=build_default_agent())
+    ticket = db.get(Ticket, first.ticket_id)
+    assert ticket.pending_context["intent"] == "refund_request"
+
+    second, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content=f"算了，快递到哪了 {o.order_no}",
+                          ticket_id=ticket.id))
+    run_agent_session(db, second.id, agent=build_default_agent())
+    db.refresh(second)
+    db.refresh(ticket)
+
+    assert second.current_intent == "logistics_query"
+    assert second.final_status == "resolved_by_agent"
+    assert ticket.pending_context is None
+    assert ticket.pending_action is None
+    assert db.query(RefundRequest).count() == 0
+
+
+def test_invalid_slot_keeps_pending_context(db, user_order):
+    u, _ = user_order
+    first, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我要退款"))
+    run_agent_session(db, first.id, agent=build_default_agent())
+    ticket = db.get(Ticket, first.ticket_id)
+
+    second, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我找不到", ticket_id=ticket.id))
+    run_agent_session(db, second.id, agent=build_default_agent())
+    db.refresh(second)
+    db.refresh(ticket)
+
+    assert second.final_status == "info_required"
+    assert ticket.pending_context["intent"] == "refund_request"
+    assert ticket.order_id is None
+
+
+def test_cancel_clears_pending_context(db, user_order):
+    u, _ = user_order
+    first, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我要退款"))
+    run_agent_session(db, first.id, agent=build_default_agent())
+    ticket = db.get(Ticket, first.ticket_id)
+
+    second, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="算了", ticket_id=ticket.id))
+    run_agent_session(db, second.id, agent=build_default_agent())
+    db.refresh(second)
+    db.refresh(ticket)
+
+    assert second.final_status == "closed"
+    assert ticket.pending_context is None
+    assert db.query(RefundRequest).count() == 0
+
+
+def test_pending_context_isolated_by_ticket(db, user_order):
+    u, _ = user_order
+    refund, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我要退款"))
+    logistics, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="帮我查物流"))
+    run_agent_session(db, refund.id, agent=build_default_agent())
+    run_agent_session(db, logistics.id, agent=build_default_agent())
+
+    refund_ticket = db.get(Ticket, refund.ticket_id)
+    logistics_ticket = db.get(Ticket, logistics.ticket_id)
+    assert refund_ticket.pending_context["intent"] == "refund_request"
+    assert logistics_ticket.pending_context["intent"] == "logistics_query"
+    assert refund_ticket.id != logistics_ticket.id

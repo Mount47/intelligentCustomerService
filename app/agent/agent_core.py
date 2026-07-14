@@ -6,6 +6,7 @@ M1.5 骨架：无工具、stub LLM 一轮 end_turn；M3 接 ToolRegistry，M4/M5
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from app.agent.context import AgentContext, Decision, ToolCallRecord
@@ -37,6 +38,9 @@ _OUT_OF_SCOPE_REPLY = (
     "售后事务，请问有什么可以帮您？"
 )
 _CLARIFY_REPLY = "您是想查询订单、咨询退款政策，还是提交售后申请？请补充一下，我好为您处理。"
+_ABORT_INFO_CUES = ("算了", "取消", "不用了", "不办了")
+_ORDER_QUERY_CUES = ("查", "查询", "看看", "状态", "买了什么", "买了啥")
+_INFO_TO_SLOT = {"订单号": "order_id"}
 
 
 class AgentCore:
@@ -64,6 +68,8 @@ class AgentCore:
         # 确认握手轮：用专用 parser 强约束（不走通用分类；fail-safe）
         if ctx.state == States.WAITING_USER_CONFIRM:
             return self._handle_confirm(ctx, tool_ctx)
+        if ctx.state == States.INFO_REQUIRED and ctx.pending_context:
+            return self._handle_required_info(ctx, tool_ctx)
 
         # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult；召回不确定时带历史 defer LLM）
         intent_result = self.classifier.classify_intent(ctx.message, history=ctx.history)
@@ -89,6 +95,7 @@ class AgentCore:
 
         # 6' 缺信息 → 短路 loop，索取信息
         if plan.required_info:
+            self._remember_required_info(ctx, skill.name, intent_result, plan.required_info)
             decision = Decision(
                 reply="为继续处理，请补充：" + "、".join(plan.required_info),
                 next_state=States.INFO_REQUIRED,
@@ -101,6 +108,121 @@ class AgentCore:
             decision = skill.finalize(ctx, tool_ctx)
 
         return self._finish(ctx, decision)
+
+    def _remember_required_info(self, ctx: AgentContext, skill_name: str,
+                                result: IntentResult, required_info: list[str]) -> None:
+        slots = [_INFO_TO_SLOT.get(item, item) for item in required_info]
+        ctx.pending_context = {
+            "intent": result.intent.value,
+            "skill": skill_name,
+            "required_slots": slots,
+            "collected_slots": {},
+            "intent_result": {
+                "intent": result.intent.value,
+                "polarity": result.polarity.value,
+                "action_type": result.action_type.value,
+                "confidence": result.confidence.value,
+                "requires_confirmation": result.requires_confirmation,
+                "reason": result.reason,
+            },
+            "created_at": datetime.utcnow().isoformat(),
+        }
+
+    def _handle_required_info(self, ctx: AgentContext,
+                              tool_ctx: "ToolContext | None") -> Decision:
+        """补齐 INFO_REQUIRED 槽位；明确新意图可打断旧流程。"""
+        pending = dict(ctx.pending_context or {})
+        try:
+            pending_intent = Intents(pending["intent"])
+            raw_slots = pending["required_slots"]
+            if not isinstance(raw_slots, list) or not all(isinstance(s, str) for s in raw_slots):
+                raise TypeError("required_slots must be a string list")
+            required_slots = list(raw_slots)
+        except (KeyError, TypeError, ValueError):
+            # 持久化上下文损坏时不猜旧流程，清理后按新请求重新识别。
+            logger.warning("ticket=%s invalid pending_context; restart classification", ctx.ticket_id)
+            ctx.pending_context = None
+            return self.handle(ctx, tool_ctx)
+
+        current = self.classifier.classify_intent(ctx.message, history=ctx.history)
+        if self._is_explicit_new_intent(ctx, pending_intent, current, required_slots):
+            logger.info("ticket=%s pending intent %s interrupted by %s", ctx.ticket_id,
+                        pending_intent.value, current.intent.value)
+            ctx.pending_context = None
+            # INFO_REQUIRED -> INTENT_DETECTED 由正常 handle 统一执行。
+            return self.handle(ctx, tool_ctx)
+
+        if current.intent == Intents.CANCEL_REFUND or (
+                current.intent == Intents.GENERAL_POLICY_QUERY
+                and any(cue in (ctx.message or "") for cue in _ABORT_INFO_CUES)):
+            ctx.intent = pending_intent.value
+            ctx.skill = str(pending.get("skill") or "general")
+            ctx.pending_context = None
+            return self._finish(ctx, Decision("已取消当前处理，如有其他问题可以继续告诉我。",
+                                              States.CLOSED))
+
+        collected = dict(pending.get("collected_slots") or {})
+        if "order_id" in required_slots and ctx.order_id is not None:
+            collected["order_id"] = ctx.order_id
+        missing = [slot for slot in required_slots if collected.get(slot) is None]
+        if missing:
+            pending["collected_slots"] = collected
+            ctx.pending_context = pending
+            ctx.intent = pending_intent.value
+            ctx.skill = str(pending.get("skill") or "general")
+            labels = ["订单号" if slot == "order_id" else slot for slot in missing]
+            return self._finish(ctx, Decision(
+                "还需要您补充：" + "、".join(labels), States.INFO_REQUIRED,
+                required_info=labels))
+
+        ctx.intent_result = self._restore_intent_result(pending, pending_intent)
+        ctx.intent = pending_intent.value
+        skill = self.router.route(pending_intent)
+        ctx.skill = skill.name
+        plan = skill.plan(ctx)
+        if plan.required_info:
+            # Skill 版本变化后可能新增槽位；合并并继续等待，不能带缺参硬跑。
+            extra = [_INFO_TO_SLOT.get(item, item) for item in plan.required_info]
+            pending["required_slots"] = list(dict.fromkeys(required_slots + extra))
+            pending["collected_slots"] = collected
+            ctx.pending_context = pending
+            return self._finish(ctx, Decision(
+                "还需要您补充：" + "、".join(plan.required_info), States.INFO_REQUIRED,
+                required_info=plan.required_info))
+
+        # 槽位已补齐：显式走状态机的恢复路径，再继续原 Skill。
+        ctx.pending_context = None
+        ctx.state = self.sm.transition(ctx.state, States.INFO_COLLECTED, ticket_id=ctx.ticket_id)
+        ctx.state = self.sm.transition(ctx.state, States.TOOL_EXECUTING, ticket_id=ctx.ticket_id)
+        self._run_loop(ctx, plan, tool_ctx)
+        return self._finish(ctx, skill.finalize(ctx, tool_ctx))
+
+    def _is_explicit_new_intent(self, ctx: AgentContext, pending_intent: Intents,
+                                current: IntentResult, required_slots: list[str]) -> bool:
+        if current.confidence == Confidence.LOW or current.intent == Intents.GENERAL_POLICY_QUERY:
+            return False
+        if current.intent == pending_intent or current.intent == Intents.CANCEL_REFUND:
+            return False
+        # “订单 SO-xxx”是补订单号，不是订单查询；出现明确查询动词才算打断。
+        if current.intent == Intents.ORDER_QUERY and "order_id" in required_slots \
+                and ctx.order_id is not None:
+            return any(cue in (ctx.message or "") for cue in _ORDER_QUERY_CUES)
+        return True
+
+    @staticmethod
+    def _restore_intent_result(pending: dict, fallback_intent: Intents) -> IntentResult:
+        raw = pending.get("intent_result") or {}
+        try:
+            return IntentResult(
+                intent=Intents(raw.get("intent", fallback_intent.value)),
+                polarity=Polarity(raw.get("polarity", Polarity.NEUTRAL.value)),
+                action_type=ActionType(raw.get("action_type", ActionType.NONE.value)),
+                confidence=Confidence(raw.get("confidence", Confidence.MEDIUM.value)),
+                requires_confirmation=bool(raw.get("requires_confirmation", False)),
+                reason=str(raw.get("reason", "跨轮补槽恢复")),
+            )
+        except (TypeError, ValueError):
+            return IntentResult(fallback_intent, reason="跨轮补槽恢复（字段降级）")
 
     def _handle_confirm(self, ctx: AgentContext, tool_ctx: "ToolContext | None") -> Decision:
         # ② 确认态强约束：强确认→执行 pending_action / 强取消→清理 / 其他→保持等待
