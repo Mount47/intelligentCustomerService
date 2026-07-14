@@ -76,6 +76,8 @@ def run_agent_session(db: Session, session_id: int, agent=None,
         ticket = db.get(Ticket, sess.ticket_id)
         if msg is None or ticket is None:
             raise RuntimeError("missing user message or ticket")
+        expected_ticket_state = ticket.status
+        expected_ticket_version = ticket.version
 
         if agent is None:  # 生产路径：按 .env 选 provider
             from app.agent.agent_core import build_default_agent
@@ -109,12 +111,23 @@ def run_agent_session(db: Session, session_id: int, agent=None,
         sess.estimated_cost = acct.estimated_cost
         sess.cache_hit = acct.cache_hit
         sess.task_status = task_status_for(ctx.state)
-        ticket.status = ctx.state  # 工单状态由 agent 最终态驱动
-        ticket.pending_context = ctx.pending_context
+        # 最终状态用 DB CAS 持久化；若其他 worker 已推进同一工单，当前事务整体回滚。
+        ticket_service.persist_agent_state(
+            db, ticket.id,
+            expected_state=expected_ticket_state,
+            expected_version=expected_ticket_version,
+            target_state=ctx.state,
+            pending_context=ctx.pending_context,
+        )
         if ctx.state == States.RESOLVED_BY_AGENT:   # 解决 → 回填 SLA(闭环)；转人工/等待态留给后续
             sla_service.mark_resolved(db, sess.ticket_id)
     except Exception as exc:  # noqa: BLE001 — 异步任务不崩
         logger.exception("agent session %s failed", session_id)
+        # Agent/Skill/工具的写都在本事务内；失败或 CAS 冲突必须先回滚，禁止半成品副作用落库。
+        db.rollback()
+        sess = db.get(AgentSession, session_id)
+        if sess is None:
+            raise RuntimeError(f"agent session {session_id} disappeared after rollback") from exc
         # 超时单独标记（不导入 celery，按类名判断 SoftTimeLimitExceeded）
         is_timeout = type(exc).__name__ == "SoftTimeLimitExceeded"
         sess.task_status = "timeout" if is_timeout else "failed"

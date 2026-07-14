@@ -162,6 +162,8 @@ class Ticket(Base):
     category: Mapped[str] = mapped_column(String(32))           # 工单类别 退款|物流|投诉|...
     priority: Mapped[str] = mapped_column(String(16), default="normal")  # 优先级 low|normal|high（高风险退款=high）
     status: Mapped[str] = mapped_column(String(24), default="created")   # 工单状态，对应 state_machine.States
+    # 乐观锁版本：所有状态持久化用 WHERE version=expected 做 CAS，防多 worker stale write 覆盖。
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     sla_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime)   # SLA 截止时间，超时预警用
     assigned_to: Mapped[Optional[str]] = mapped_column(String(64))       # 指派给哪位人工客服（转人工后填）
     # 待确认的高危动作（如待确认的退款）。{type, order_id, amount, created_at}；

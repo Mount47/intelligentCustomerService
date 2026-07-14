@@ -92,3 +92,4 @@ def test_mvp_schema_compat_adds_pending_context_to_existing_ticket_table():
 
     columns = {c["name"] for c in inspect(engine).get_columns("tickets")}
     assert "pending_context" in columns
+    assert "version" in columns

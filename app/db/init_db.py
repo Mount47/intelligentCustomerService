@@ -21,6 +21,12 @@ def ensure_mvp_schema_compat(bind=engine) -> None:
             # JSON 同时可用于 PostgreSQL 与 SQLite；列名固定，不接收外部输入。
             conn.execute(text("ALTER TABLE tickets ADD COLUMN pending_context JSON"))
         logger.info("DB schema upgraded: tickets.pending_context added")
+    if "version" not in columns:
+        with bind.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE tickets ADD COLUMN version INTEGER NOT NULL DEFAULT 0"
+            ))
+        logger.info("DB schema upgraded: tickets.version added")
 
 
 def init_db() -> None:

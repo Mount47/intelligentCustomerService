@@ -88,7 +88,7 @@ def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, b
         if order_id is not None and ticket.order_id not in (None, order_id):
             raise ResourceAccessDenied("ticket is already bound to another order")
         if ticket.order_id is None and order_id is not None:
-            ticket.order_id = order_id     # 多轮：补上后续消息里给出的订单
+            ticket = ticket_service.bind_order(db, ticket.id, order_id)
     else:
         ticket = ticket_service.create_ticket(
             db, payload.user_id, category="chat", order_id=order_id)

@@ -23,6 +23,13 @@ class InvalidStateTransition(SupportFlowError):
     http_status = 409
 
 
+class ConcurrentStateUpdate(SupportFlowError):
+    """工单状态已被其他事务推进，当前 stale writer 必须回滚并重试。"""
+
+    code = "concurrent_state_update"
+    http_status = 409
+
+
 class IdempotencyKeyConflict(SupportFlowError):
     """同 idempotency_key 但请求参数不一致（§9.2）。"""
 
