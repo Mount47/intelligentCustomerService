@@ -15,6 +15,8 @@ agent loop 无感。可选 fallback（同 provider 换更稳/更便宜的模型�
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from threading import Lock
 
 from app.core.exceptions import LLMError
 from app.core.logging import get_logger
@@ -27,6 +29,14 @@ class CircuitOpenError(LLMError):
     """熔断打开期间快速失败（无 fallback 时抛出）。"""
 
 
+@dataclass(frozen=True)
+class CircuitPermit:
+    """一次主 provider 调用的许可；generation 防迟到结果污染新一代状态。"""
+
+    generation: int
+    probe: bool = False
+
+
 class CircuitBreaker:
     """三态熔断的纯逻辑（不含 LLM，便于单测）。clock 可注入做确定性时间测试。"""
 
@@ -37,30 +47,69 @@ class CircuitBreaker:
         self.failures = 0
         self.state = "closed"
         self._opened_at = 0.0
+        self._probe_in_flight = False
+        self._generation = 0
+        self._lock = Lock()
+
+    def acquire(self) -> CircuitPermit | None:
+        """获取调用许可。OPEN 冷却到点只发一个带代次的 HALF_OPEN 探针。"""
+        with self._lock:
+            if self.state == "closed":
+                return CircuitPermit(self._generation)
+            if self.state == "open":
+                if self._clock() - self._opened_at >= self.reset_timeout:
+                    # 状态切换与发放探针在同一临界区；其他线程只会看到 half_open 并拒绝。
+                    self.state = "half_open"
+                    self._probe_in_flight = True
+                    return CircuitPermit(self._generation, probe=True)
+                return None
+            return None  # half_open 已有探针在途，其余请求快速降级
 
     def allow(self) -> bool:
-        """能否尝试真实调用。OPEN 且冷却已过 → 转 HALF_OPEN 放一个试探。"""
-        if self.state == "open":
-            if self._clock() - self._opened_at >= self.reset_timeout:
-                self.state = "half_open"
-                return True
-            return False
-        return True   # closed / half_open
+        """兼容纯逻辑调用；生产包装器使用 acquire() 并回传 permit。"""
+        return self.acquire() is not None
 
-    def record_success(self) -> None:
-        self.failures = 0
-        if self.state != "closed":
-            logger.info("circuit breaker → closed (recovered)")
-        self.state = "closed"
+    def record_success(self, permit: CircuitPermit | None = None) -> None:
+        with self._lock:
+            if permit is not None:
+                if permit.generation != self._generation:
+                    return
+                if permit.probe:
+                    if self.state != "half_open" or not self._probe_in_flight:
+                        return
+                elif self.state != "closed":
+                    return
+            if self.state == "half_open":
+                self.failures = 0
+                self.state = "closed"
+                self._probe_in_flight = False
+                self._generation += 1  # 探针代结束，迟到结果全部失效
+                logger.info("circuit breaker → closed (probe recovered)")
+            elif self.state == "closed":
+                self.failures = 0
+            # OPEN 表示其他并发请求已触发熔断；忽略此前放行请求的迟到成功，不能误关熔断。
 
-    def record_failure(self) -> None:
-        self.failures += 1
-        # HALF_OPEN 下试探失败，或 CLOSED 下累计到阈值 → 打开
-        if self.state == "half_open" or self.failures >= self.fail_max:
-            if self.state != "open":
+    def record_failure(self, permit: CircuitPermit | None = None) -> None:
+        with self._lock:
+            if permit is not None:
+                if permit.generation != self._generation:
+                    return
+                if permit.probe:
+                    if self.state != "half_open" or not self._probe_in_flight:
+                        return
+                elif self.state != "closed":
+                    return
+            if self.state == "open":
+                # 忽略熔断前已放行请求的迟到失败，不延长当前冷却窗口。
+                return
+            self.failures += 1
+            # HALF_OPEN 下唯一探针失败，或 CLOSED 下累计到阈值 → 打开
+            if self.state == "half_open" or self.failures >= self.fail_max:
                 logger.warning("circuit breaker → open (failures=%d)", self.failures)
-            self.state = "open"
-            self._opened_at = self._clock()
+                self.state = "open"
+                self._opened_at = self._clock()
+                self._probe_in_flight = False
+                self._generation += 1  # 新熔断代，之前所有在途许可失效
 
 
 class CircuitBreakerLLMClient:
@@ -81,13 +130,14 @@ class CircuitBreakerLLMClient:
 
     def chat(self, *, system: str, messages: list[Msg],
              tools: list[ToolSpec] | None = None, stream: bool = False) -> LLMResponse:
-        if not self._breaker.allow():                       # OPEN 冷却内 → 不碰主 provider
+        permit = self._breaker.acquire()
+        if permit is None:                                  # OPEN/HALF_OPEN 非探针 → 不碰主 provider
             return self._degrade(system, messages, tools, stream)
         try:
             resp = self._primary.chat(system=system, messages=messages, tools=tools, stream=stream)
-            self._breaker.record_success()
+            self._breaker.record_success(permit)
             return resp
         except Exception as exc:  # noqa: BLE001 — 任何 provider 异常都计入熔断
-            self._breaker.record_failure()
+            self._breaker.record_failure(permit)
             logger.warning("LLM primary call failed: %s", exc)
             return self._degrade(system, messages, tools, stream)
