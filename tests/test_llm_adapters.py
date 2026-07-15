@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.core.exceptions import LLMError
 from app.llm.base import Msg, ToolCall, ToolSpec
 from app.llm.claude_adapter import ClaudeAdapter, _to_anthropic_messages
+from app.llm.errors import ContextWindowExceeded
 from app.llm.openai_compat_adapter import OpenAICompatAdapter, _to_openai_messages
 from app.llm.registry import build_llm_client
 
@@ -29,6 +30,8 @@ class _FakeAnthropic:
 
     def create(self, **kw):
         self.captured = kw
+        if isinstance(self._resp, BaseException):
+            raise self._resp
         return self._resp
 
 
@@ -77,6 +80,13 @@ def test_claude_message_mapping_tool_roundtrip():
     assert out[2]["content"][0]["tool_use_id"] == "tu1"
 
 
+def test_claude_normalizes_context_window_error():
+    with pytest.raises(ContextWindowExceeded):
+        ClaudeAdapter(
+            model="claude", client=_FakeAnthropic(ValueError("prompt is too long: 200001 tokens")),
+        ).chat(system="sys", messages=[Msg("user", "x")])
+
+
 # ---------- OpenAI 兼容 ----------
 class _FakeOpenAI:
     def __init__(self, resp):
@@ -86,6 +96,8 @@ class _FakeOpenAI:
         class _C:
             def create(self, **kw):
                 outer.captured = kw
+                if isinstance(outer._resp, BaseException):
+                    raise outer._resp
                 return outer._resp
         self.chat = NS(completions=_C())
 
@@ -121,23 +133,33 @@ def test_openai_message_mapping_tool_roundtrip():
     assert out[1] == {"role": "tool", "tool_call_id": "c1", "content": '{"ok":true}'}
 
 
+def test_openai_normalizes_context_window_error_code():
+    exc = ValueError("bad request")
+    exc.code = "context_length_exceeded"
+    with pytest.raises(ContextWindowExceeded):
+        OpenAICompatAdapter(model="qwen", client=_FakeOpenAI(exc)).chat(
+            system="sys", messages=[Msg("user", "x")],
+        )
+
+
 # ---------- registry ----------
 def _adapter(provider):
-    # 关熔断 → 直接拿裸适配器，验 provider→adapter 选型
+    # 关熔断仍保留上下文 backstop；检查其内层 provider adapter 选型。
     return build_llm_client(Settings(llm_provider=provider, circuit_breaker_enabled=False))
 
 
 def test_registry_picks_adapter_by_provider():
-    assert type(_adapter("claude")).__name__ == "ClaudeAdapter"
-    assert type(_adapter("deepseek")).__name__ == "OpenAICompatAdapter"
-    assert type(_adapter("qwen")).__name__ == "OpenAICompatAdapter"
-    assert type(_adapter("gpt")).__name__ == "OpenAICompatAdapter"
-    assert type(_adapter("stub")).__name__ == "StubLLMClient"
+    assert type(_adapter("claude")._client).__name__ == "ClaudeAdapter"
+    assert type(_adapter("deepseek")._client).__name__ == "OpenAICompatAdapter"
+    assert type(_adapter("qwen")._client).__name__ == "OpenAICompatAdapter"
+    assert type(_adapter("gpt")._client).__name__ == "OpenAICompatAdapter"
+    assert type(_adapter("stub")._client).__name__ == "StubLLMClient"
     with pytest.raises(LLMError):
         build_llm_client(Settings(llm_provider="nonsense", circuit_breaker_enabled=False))
 
 
 def test_registry_wraps_with_circuit_breaker_by_default():
-    # 默认开启熔断 → 返回包装客户端，但选型不变（model_name 透传裸适配器）
+    # 最外层是上下文 backstop，内层默认开启熔断；model_name 一路透传。
     c = build_llm_client(Settings(llm_provider="stub"))
-    assert type(c).__name__ == "CircuitBreakerLLMClient"
+    assert type(c).__name__ == "ContextBackstopLLMClient"
+    assert type(c._client).__name__ == "CircuitBreakerLLMClient"

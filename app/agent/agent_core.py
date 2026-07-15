@@ -25,6 +25,7 @@ from app.agent.skill_router import SkillRouter
 from app.agent.state_machine import StateMachine, States
 from app.core.logging import get_logger
 from app.llm.base import LLMClient, Msg, ToolSpec
+from app.llm.errors import ContextWindowExceeded
 from app.llm.stub import StubLLMClient
 
 if TYPE_CHECKING:
@@ -64,6 +65,23 @@ class AgentCore:
         # 0 初始状态
         if ctx.state is None:
             ctx.state = States.CREATED
+
+        try:
+            return self._handle(ctx, tool_ctx)
+        except ContextWindowExceeded:
+            # 包装层已做过一次有效压缩重试；再失败不原样重试、不继续业务 finalize。
+            logger.warning("ticket=%s context still exceeds limit; hand off", ctx.ticket_id)
+            ctx.pending_context = None
+            if not self.sm.can(ctx.state, States.NEED_HUMAN):
+                raise
+            return self._finish(ctx, Decision(
+                "当前对话内容较长，系统暂时无法安全继续处理，已为您转接人工客服。",
+                States.NEED_HUMAN,
+                need_handoff=True,
+                handoff_reason="context_window_exceeded",
+            ))
+
+    def _handle(self, ctx: AgentContext, tool_ctx: "ToolContext | None" = None) -> Decision:
 
         # 确认握手轮：用专用 parser 强约束（不走通用分类；fail-safe）
         if ctx.state == States.WAITING_USER_CONFIRM:

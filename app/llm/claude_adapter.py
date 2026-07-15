@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.core.logging import get_logger
 from app.llm.base import LLMResponse, Msg, ToolCall, ToolSpec, Usage
+from app.llm.errors import normalize_provider_error
 
 logger = get_logger(__name__)
 
@@ -95,5 +96,11 @@ class ClaudeAdapter:
                 {"name": t.name, "description": t.description, "input_schema": t.input_schema}
                 for t in tools
             ]
-        resp = self._client_or_make().messages.create(**kwargs)
+        try:
+            resp = self._client_or_make().messages.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001 — 统一 provider 可恢复异常，未知类型原样抛出
+            normalized = normalize_provider_error(exc)
+            if normalized is exc:
+                raise
+            raise normalized from exc
         return _parse_anthropic(resp)

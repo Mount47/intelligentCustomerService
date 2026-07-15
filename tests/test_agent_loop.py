@@ -10,7 +10,9 @@ from app.agent.intent_classifier import HybridIntentClassifier
 from app.agent.skill_router import SkillRouter
 from app.agent.state_machine import StateMachine, States
 from app.db.models import AgentSession, AgentToolCall, User
-from app.llm.base import LLMResponse, ToolCall, Usage
+from app.llm.base import LLMResponse, Msg, ToolCall, Usage
+from app.llm.context_backstop import ContextBackstopLLMClient
+from app.llm.errors import ContextWindowExceeded
 from app.tools.base import ToolContext
 from app.tools.registry import build_tool_registry
 
@@ -183,3 +185,36 @@ def test_hybrid_intent_llm_fallback():
     assert from_rule is False
     # 规则命中 → 不走 LLM
     assert clf.classify("我要退款") == ("refund_request", True)
+
+
+def test_second_context_overflow_hands_off_without_finalizing(db, user_order):
+    u, o = user_order
+    sess = AgentSession(user_id=u.id)
+    db.add(sess)
+    db.flush()
+
+    class AlwaysTooLong:
+        model_name = "too-long"
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, **kwargs):
+            self.calls += 1
+            raise ContextWindowExceeded("too long")
+
+    inner = AlwaysTooLong()
+    llm = ContextBackstopLLMClient(inner, char_budget=200)
+    agent = _agent(llm)
+    ctx = AgentContext(
+        session_id=sess.id, ticket_id=1, user_id=u.id,
+        message="查我的订单", order_id=o.id,
+        history=[Msg("user", "很长的旧历史" * 100)],
+    )
+    decision = agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
+
+    assert inner.calls == 2
+    assert ctx.state == States.NEED_HUMAN
+    assert decision.need_handoff is True
+    assert decision.handoff_reason == "context_window_exceeded"
+    assert ctx.tool_call_records == []

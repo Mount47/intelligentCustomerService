@@ -291,6 +291,7 @@ class HybridIntentClassifier:
     def _classify_llm(self, message: str, history=None,
                       candidates: list[Intents] | None = None) -> Intents | None:
         from app.llm.base import Msg
+        from app.llm.errors import ContextWindowExceeded
         allowed = candidates or list(ALL_INTENTS)
         system = (
             "你是售后意图分类器。结合对话历史，判断用户【最后一句】最匹配下列哪个意图，"
@@ -300,6 +301,9 @@ class HybridIntentClassifier:
         messages = list(history or []) + [Msg("user", message)]
         try:
             resp = self.llm.chat(system=system, messages=messages)
+        except ContextWindowExceeded:
+            # backstop 已压缩重试过；继续吞掉会把可用性故障伪装成普通低置信分类。
+            raise
         except Exception:  # noqa: BLE001 — 分类失败不阻断主流程
             return None
         text = (resp.text or "").strip().lower()

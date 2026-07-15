@@ -5,6 +5,7 @@ import pytest
 
 from app.llm.base import LLMResponse
 from app.llm.circuit_breaker import CircuitBreaker, CircuitBreakerLLMClient, CircuitOpenError
+from app.llm.errors import ContextWindowExceeded
 
 
 class _Clock:
@@ -163,3 +164,36 @@ def test_closed_passes_through_on_success():
     primary = _Primary(fail_until=0)     # 从不失败
     c = CircuitBreakerLLMClient(primary, fail_max=3)
     assert _call(c).text == "primary-ok"
+
+
+def test_context_window_error_does_not_count_as_provider_failure():
+    class TooLong:
+        model_name = "too-long"
+        calls = 0
+
+        def chat(self, **kwargs):
+            self.calls += 1
+            raise ContextWindowExceeded("too long")
+
+    primary = TooLong()
+    client = CircuitBreakerLLMClient(primary, fail_max=1)
+    for _ in range(2):
+        with pytest.raises(ContextWindowExceeded):
+            _call(client)
+    assert primary.calls == 2
+    assert client._breaker.state == "closed"
+    assert client._breaker.failures == 0
+
+
+def test_context_error_on_half_open_probe_does_not_wedge_probe_slot():
+    clk = _Clock()
+    cb = CircuitBreaker(fail_max=1, reset_timeout=10, clock=clk)
+    cb.record_failure()
+    clk.t = 10
+    probe = cb.acquire()
+    assert probe is not None and probe.probe is True
+
+    cb.discard(probe)
+    assert cb.state == "open"
+    replacement = cb.acquire()
+    assert replacement is not None and replacement.probe is True

@@ -21,6 +21,7 @@ from threading import Lock
 from app.core.exceptions import LLMError
 from app.core.logging import get_logger
 from app.llm.base import LLMClient, LLMResponse, Msg, ToolSpec
+from app.llm.errors import ContextWindowExceeded
 
 logger = get_logger(__name__)
 
@@ -111,6 +112,18 @@ class CircuitBreaker:
                 self._probe_in_flight = False
                 self._generation += 1  # 新熔断代，之前所有在途许可失效
 
+    def discard(self, permit: CircuitPermit) -> None:
+        """请求自身无效时释放许可；不计 provider 成败，也不能卡死 HALF_OPEN。"""
+        with self._lock:
+            if permit.generation != self._generation:
+                return
+            if permit.probe and self.state == "half_open" and self._probe_in_flight:
+                # 该请求无法证明 provider 是否恢复。回 OPEN，但保留已过期的 opened_at，
+                # 让下一个合法请求可以立即成为新探针，而不是再等一个冷却周期。
+                self.state = "open"
+                self._probe_in_flight = False
+                self._generation += 1
+
 
 class CircuitBreakerLLMClient:
     """给主 LLMClient 套熔断。fallback 存在则降级到它，否则 OPEN 时抛 CircuitOpenError。"""
@@ -137,6 +150,10 @@ class CircuitBreakerLLMClient:
             resp = self._primary.chat(system=system, messages=messages, tools=tools, stream=stream)
             self._breaker.record_success(permit)
             return resp
+        except ContextWindowExceeded:
+            # 请求内容问题不是 provider 故障：不污染失败计数，也不打开熔断器。
+            self._breaker.discard(permit)
+            raise
         except Exception as exc:  # noqa: BLE001 — 任何 provider 异常都计入熔断
             self._breaker.record_failure(permit)
             logger.warning("LLM primary call failed: %s", exc)
