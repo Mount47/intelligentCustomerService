@@ -11,10 +11,16 @@ from app.db.session import get_db
 from app.main import app
 from app.observability.metrics import compute_metrics
 from app.schemas.chat import ChatMessageIn
+from app.schemas.common import to_frontend_task_status
 from app.services import chat_service
 from app.workers.runner import run_agent_session
 
 from .conftest import make_order
+
+
+def test_waiting_user_input_is_not_reported_as_resolved():
+    assert to_frontend_task_status("waiting_user_input") == "waiting_user_input"
+    assert to_frontend_task_status("completed") == "final"
 
 
 def test_metrics_compute(db, user_order):

@@ -17,12 +17,13 @@ class CamelModel(BaseModel):
     )
 
 
-# 内部 task_status → 前端 TaskStatus 枚举(queued|processing|final|need_human|failed)
+# 内部 task_status → 前端 TaskStatus 枚举。
+# waiting_user_input 必须独立暴露：它表示流程暂停等待用户补充/确认，不是“已解决”。
 _FRONTEND_TASK_STATUS = {
     "queued": "queued",
     "processing": "processing",
     "completed": "final",
-    "waiting_user_input": "final",
+    "waiting_user_input": "waiting_user_input",
     "need_human": "need_human",
     "failed": "failed",
     "timeout": "failed",

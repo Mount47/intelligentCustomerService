@@ -51,6 +51,15 @@ def test_max_iters_caps_infinite_stream():
     assert out[-1].startswith("event: done")      # 兜底也收尾
 
 
+def test_waiting_user_input_is_a_stream_terminal_state():
+    out = _collect(stream_session_events(
+        lambda: _FakeView("waiting_user_input", reply="请回复确认或取消"),
+        sleep=lambda _: None,
+    ))
+    assert "waiting_user_input" in out[0]
+    assert out[-1].startswith("event: done")
+
+
 @pytest.fixture
 def client():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
