@@ -16,3 +16,6 @@ build/
 .DS_Store
 node_modules/
 *.tsbuildinfo
+
+# 面试准备/项目文档：不纳入版本管理（本地保留）
+docs/
