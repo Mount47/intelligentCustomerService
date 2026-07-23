@@ -1,4 +1,4 @@
-export type TaskStatus = "queued" | "processing" | "final" | "need_human" | "failed";
+export type TaskStatus = "queued" | "processing" | "waiting_user_input" | "final" | "need_human" | "failed";
 export type StepStatus = "pending" | "running" | "success" | "failed";
 
 export interface ChatMessage {

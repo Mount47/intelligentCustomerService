@@ -62,17 +62,17 @@ POLICIES = [
 # 确定性"场景订单"：每条覆盖一个 Skill 分支，固定 order_no，可复现。
 # (order_no, 建议消息, 预期场景, 订单条件)
 SCENARIOS = [
-    ("DEMO-REFUND-LOW", "我要退款", "退款·低风险→自动草稿", {"amount": 120}),
-    ("DEMO-REFUND-500", "我要退款", "退款·金额边界500→不触发(自动)", {"amount": 500}),
+    ("DEMO-REFUND-LOW", "我要退款", "退款·低风险→等待用户确认", {"amount": 120}),
+    ("DEMO-REFUND-500", "我要退款", "退款·金额边界500→等待用户确认", {"amount": 500}),
     ("DEMO-REFUND-501", "我要退款", "退款·金额边界501→人工", {"amount": 501}),
     ("DEMO-REFUND-HIGH", "我要退款", "退款·高金额→人工", {"amount": 999}),
     ("DEMO-REFUND-FRESH", "这个生鲜我要退款", "退款·生鲜→人工", {"amount": 60, "product": "fresh_food"}),
     ("DEMO-REFUND-CUSTOM", "这个定制的我要退款", "退款·定制→人工", {"amount": 80, "product": "customized_product"}),
     ("DEMO-REFUND-OVERDUE", "我要申请退款", "退款·签收超7天→人工", {"amount": 100, "delivered_days_ago": 10}),
-    ("DEMO-REFUND-INWINDOW", "我要退款", "退款·签收7天内→自动", {"amount": 100, "delivered_days_ago": 2}),
+    ("DEMO-REFUND-INWINDOW", "我要退款", "退款·签收7天内→等待用户确认", {"amount": 100, "delivered_days_ago": 2}),
     ("DEMO-REFUND-CANCELLED", "我要退款", "退款·已取消→不可退转人工", {"amount": 100, "status": "cancelled"}),
     ("DEMO-REFUND-OTHEROWNER", "我要退款", "退款·非本人订单→转人工", {"amount": 100, "other_owner": True}),
-    ("DEMO-RETURN", "我要退货", "退货·窗口内→自动", {"amount": 100, "delivered_days_ago": 2}),
+    ("DEMO-RETURN", "我要退货", "退货·窗口内→等待用户确认", {"amount": 100, "delivered_days_ago": 2}),
     ("DEMO-LOGI-NORMAL", "我的快递到哪了", "物流·正常播报",
      {"status": "shipped", "logistics": {"status": "in_transit", "hours_ago": 2}}),
     ("DEMO-LOGI-STALE", "我的快递怎么还没动", "物流·48h无更新→催件",

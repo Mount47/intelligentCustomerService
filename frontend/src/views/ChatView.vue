@@ -37,6 +37,7 @@ watch(userId, newConversation);
 const statusMeta: Record<TaskStatus, { label: string; type: "info" | "warning" | "success" | "danger"; text: string }> = {
   queued: { label: "queued", type: "info", text: "排队中" },
   processing: { label: "processing", type: "warning", text: "处理中" },
+  waiting_user_input: { label: "waiting_user_input", type: "warning", text: "等待您的回复" },
   final: { label: "final", type: "success", text: "已解决" },
   need_human: { label: "need_human", type: "danger", text: "转人工" },
   failed: { label: "failed", type: "danger", text: "失败" }

@@ -15,6 +15,8 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 // 都不设时，dev 默认 mock（零配置预览 UI）、生产默认连后端。显式设置优先于 dev 默认。
 const _mockFlag = import.meta.env.VITE_USE_MOCK;
 const USE_MOCK = _mockFlag === "true" || (_mockFlag == null && import.meta.env.DEV);
+// 仅用于显式的演示容灾。真实联调/生产默认禁止接口失败后伪装成 mock 成功。
+const ENABLE_MOCK_FALLBACK = import.meta.env.VITE_ENABLE_MOCK_FALLBACK === "true";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -29,10 +31,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function withFallback<T>(realCall: () => Promise<T>, mockCall: () => Promise<T>): Promise<T> {
   if (USE_MOCK) return mockCall();
+  if (!ENABLE_MOCK_FALLBACK) return realCall();
   try {
     return await realCall();
   } catch (error) {
-    console.warn("[SupportFlow] API unavailable, falling back to mock data.", error);
+    console.warn("[SupportFlow] API unavailable; explicit mock fallback is enabled.", error);
     return mockCall();
   }
 }

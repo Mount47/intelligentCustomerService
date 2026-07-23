@@ -27,7 +27,7 @@ from app.agent.agent_core import build_default_agent
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.db.init_db import init_db
-from app.db.models import Logistics, Order, User
+from app.db.models import Logistics, Order, RefundRequest, User
 from app.db.session import SessionLocal
 from app.llm.registry import build_llm_client
 from app.schemas.chat import ChatMessageIn
@@ -56,9 +56,11 @@ def _seed(db) -> dict:
     return {"user": u.id, "normal": normal.id, "big": big.id, "shipped": shipped.id}
 
 
-def _run_one(db, agent, user_id: int, content: str, order_id: int | None) -> None:
-    sess, _ = chat_service.accept_message(
-        db, ChatMessageIn(user_id=user_id, content=content, order_id=order_id))
+def _run_one(db, agent, user_id: int, content: str, order_id: int | None = None,
+             ticket_id: int | None = None):
+    """跑一轮并返回会话视图；ticket_id 用于演示真实的跨轮确认。"""
+    sess, _ = chat_service.accept_message(db, ChatMessageIn(
+        user_id=user_id, content=content, order_id=order_id, ticket_id=ticket_id))
     run_agent_session(db, sess.id, agent=agent)
     view = chat_service.get_session_view(db, sess.id)
     print("\n" + "=" * 64)
@@ -69,6 +71,7 @@ def _run_one(db, agent, user_id: int, content: str, order_id: int | None) -> Non
         f"{s.title}" + (f"({s.detail})" if s.detail else "") for s in view.steps))
     print(f"回复：{view.latest_reply}")
     print(f"token：{view.token_usage.model_name} total={view.token_usage.total_tokens}")
+    return view
 
 
 def main() -> None:
@@ -79,10 +82,15 @@ def main() -> None:
     with SessionLocal() as db:
         ids = _seed(db)
         agent = build_default_agent(build_llm_client(s))
-        _run_one(db, agent, ids["user"], "我要退款，不想要了", ids["normal"])   # 低风险→自动草稿
+        pending = _run_one(
+            db, agent, ids["user"], "我要退款，不想要了", ids["normal"])
+        _run_one(
+            db, agent, ids["user"], "确认，帮我提交退款",
+            ticket_id=pending.ticket_id)                                             # 二次确认→创建一条退款申请
+        print(f"退款申请数：{db.query(RefundRequest).count()}（低风险确认后应为 1）")
         _run_one(db, agent, ids["user"], "这个太贵了我要退款", ids["big"])        # 高风险→转人工
         _run_one(db, agent, ids["user"], "我的快递怎么还没动", ids["shipped"])     # 物流异常→催件
-        _run_one(db, agent, ids["user"], "你们的售后政策是怎样的", None)          # 兜底
+        _run_one(db, agent, ids["user"], "今天天气怎么样")                       # 售后域外→硬边界拒答
     print("\n" + "=" * 64 + "\n[demo] done.")
 
 

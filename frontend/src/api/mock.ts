@@ -21,7 +21,7 @@ function elapsedStage(createdAt: number): number {
 function buildSession(id: string): ChatSession {
   const item = sessions.get(id) ?? { createdAt: Date.now() - 5000, content: "我想申请订单 SO202606180018 的退款", userId: "1" };
   const stage = elapsedStage(item.createdAt);
-  const status = stage >= 5 ? "final" : stage === 0 ? "queued" : "processing";
+  const status = stage >= 5 ? "waiting_user_input" : stage === 0 ? "queued" : "processing";
   const userMessage: ChatMessage = {
     id: `${id}-user`,
     sender: "user",
@@ -31,7 +31,7 @@ function buildSession(id: string): ChatSession {
   const agentMessage: ChatMessage = {
     id: `${id}-agent`,
     sender: "agent",
-    content: "已核对订单与退款政策：该订单为普通商品，签收未超过 7 天，金额低于自动退款阈值。我已为你创建退款草稿，后续可在订单页确认提交。",
+    content: "已核对订单与退款政策：该订单符合低风险退款条件。请回复『确认』继续，或『取消』放弃，本次尚未创建退款申请。",
     createdAt: nowIso()
   };
 
@@ -41,8 +41,8 @@ function buildSession(id: string): ChatSession {
     taskStatus: status,
     currentIntent: stage >= 1 ? "refund_request" : undefined,
     currentSkill: stage >= 2 ? "RefundHandlingSkill" : undefined,
-    currentState: stage >= 4 ? "auto_refund_draft_created" : stage >= 1 ? "processing" : "queued",
-    finalStatus: stage >= 5 ? "resolved" : undefined,
+    currentState: stage >= 4 ? "waiting_user_confirm" : stage >= 1 ? "processing" : "queued",
+    finalStatus: stage >= 5 ? "waiting_user_confirm" : undefined,
     latestReply: stage >= 5 ? agentMessage.content : undefined,
     messages: stage >= 5 ? [userMessage, agentMessage] : [userMessage],
     steps: [
@@ -50,7 +50,7 @@ function buildSession(id: string): ChatSession {
       { id: "skill", kind: "skill", title: "路由技能", detail: "RefundHandlingSkill", status: stage >= 2 ? "success" : stage === 1 ? "running" : "pending" },
       { id: "order", kind: "tool", title: "调用工具", detail: "查询订单 SO202606180018", status: stage >= 3 ? "success" : stage === 2 ? "running" : "pending", latencyMs: stage >= 3 ? 86 : undefined },
       { id: "policy", kind: "tool", title: "调用工具", detail: "核对退款政策：普通商品 / 未超 7 天 / 金额 < 500", status: stage >= 4 ? "success" : stage === 3 ? "running" : "pending", latencyMs: stage >= 4 ? 44 : undefined },
-      { id: "risk", kind: "risk", title: "风险判断", detail: "低风险，可自动创建退款草稿", status: stage >= 4 ? "success" : "pending" },
+      { id: "risk", kind: "risk", title: "风险判断", detail: "低风险，进入用户二次确认", status: stage >= 4 ? "success" : "pending" },
       { id: "reply", kind: "reply", title: "生成回复", detail: "整理处理结果并写入消息记录", status: stage >= 5 ? "success" : stage === 4 ? "running" : "pending" }
     ],
     toolCalls: stage >= 3 ? [
