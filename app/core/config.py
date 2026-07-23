@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +18,8 @@ class Settings(BaseSettings):
     # 应用
     app_name: str = "SupportFlow"
     app_env: str = "local"
-    debug: bool = True
+    # 不读取通用 DEBUG：它常被 shell/IDE 设成 release 等非布尔值，曾导致应用启动前失败。
+    debug: bool = Field(default=True, validation_alias="SUPPORTFLOW_DEBUG")
     log_level: str = "INFO"
     cors_origins: str = "*"   # 逗号分隔的允许来源；本地联调默认全放开
 
