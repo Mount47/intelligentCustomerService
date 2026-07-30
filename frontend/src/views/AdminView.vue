@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { Connection, DocumentChecked, Money, Stopwatch, Tickets, TrendCharts } from "@element-plus/icons-vue";
-import * as echarts from "echarts";
+import { LineChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { init, use, type ECharts } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
 import { api } from "../api/client";
 import type { AdminMetrics, SessionDetail, SessionSummary, TicketDetail, TicketSummary } from "../api/types";
+
+use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 const metrics = ref<AdminMetrics | null>(null);
 const tickets = ref<TicketSummary[]>([]);
@@ -13,8 +18,11 @@ const activeSession = ref<SessionDetail | null>(null);
 const loading = ref(false);
 const error = ref("");
 const auto = ref(true);
+const assignee = ref("agent-001");
+const actionNote = ref("");
+const actionLoading = ref(false);
 const chartEl = ref<HTMLDivElement | null>(null);
-let chart: echarts.ECharts | undefined;
+let chart: ECharts | undefined;
 let timer: number | undefined;
 
 // 真实时间序列：每次轮询累积一个点（活跃会话 / 队列深度）→ 动态削峰曲线（替代写死假数据）
@@ -37,7 +45,7 @@ const metricCards = computed(() => {
 
 function drawChart() {
   if (!chartEl.value) return;
-  chart = chart ?? echarts.init(chartEl.value);
+  chart = chart ?? init(chartEl.value);
   chart.setOption({
     textStyle: { fontFamily: "JetBrains Mono, monospace" },
     grid: { left: 36, right: 18, top: 30, bottom: 28 },
@@ -121,6 +129,26 @@ async function selectSession(row: SessionSummary) {
   }
 }
 
+async function handleTicket(action: "assign" | "resolve" | "reject" | "close") {
+  if (!activeTicket.value || actionLoading.value) return;
+  actionLoading.value = true;
+  error.value = "";
+  try {
+    activeTicket.value = await api.handleTicket(activeTicket.value.id, {
+      action,
+      ...(action === "assign" ? { assignedTo: assignee.value.trim() } : {}),
+      ...(actionNote.value.trim() ? { note: actionNote.value.trim() } : {})
+    });
+    actionNote.value = "";
+    tickets.value = await api.listTickets();
+    metrics.value = await api.getMetrics();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "工单处理失败";
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
 onMounted(async () => {
   await loadDashboard();
   startAuto();
@@ -164,7 +192,15 @@ onBeforeUnmount(() => {
       </div>
       <div class="dashboard-panel quality-panel">
         <div class="panel-title">质检评分</div>
-        <p>QualityReviewSkill 后续接入。当前仅保留入口，不写入评分数据。</p>
+        <template v-if="metrics?.quality?.count">
+          <div class="quality-scores">
+            <span>解决/分流 <strong>{{ metrics.quality.resolution.toFixed(2) }}</strong></span>
+            <span>工具正确 <strong>{{ metrics.quality.tool.toFixed(2) }}</strong></span>
+            <span>政策合规 <strong>{{ metrics.quality.compliance.toFixed(2) }}</strong></span>
+          </div>
+          <p>共 {{ metrics.quality.count }} 条确定性流程质检记录；真实语义质量见独立模型评测报告。</p>
+        </template>
+        <p v-else>暂无已完成会话的质检记录。</p>
       </div>
     </section>
 
@@ -186,6 +222,16 @@ onBeforeUnmount(() => {
           <div class="detail-head">
             <strong>{{ activeTicket.id }}</strong>
             <el-tag>{{ activeTicket.status }}</el-tag>
+          </div>
+          <div class="human-actions">
+            <el-input v-model="assignee" size="small" placeholder="客服工号" />
+            <el-input v-model="actionNote" size="small" placeholder="处理备注（可选）" />
+            <div>
+              <el-button size="small" :loading="actionLoading" @click="handleTicket('assign')">指派</el-button>
+              <el-button size="small" type="success" :loading="actionLoading" @click="handleTicket('resolve')">人工解决</el-button>
+              <el-button size="small" type="danger" plain :loading="actionLoading" @click="handleTicket('reject')">驳回</el-button>
+              <el-button size="small" plain :loading="actionLoading" @click="handleTicket('close')">关闭</el-button>
+            </div>
           </div>
           <el-timeline>
             <el-timeline-item

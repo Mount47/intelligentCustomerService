@@ -1,6 +1,14 @@
 export type TaskStatus = "queued" | "processing" | "waiting_user_input" | "final" | "need_human" | "failed";
 export type StepStatus = "pending" | "running" | "success" | "failed";
 
+export interface TokenResponse {
+  accessToken: string;
+  tokenType: "bearer";
+  expiresIn: number;
+  userId: string;
+  role: "user" | "admin";
+}
+
 export interface ChatMessage {
   id: string;
   sender: "user" | "agent" | "human" | "system";
@@ -53,7 +61,7 @@ export interface ChatSession {
 }
 
 export interface SendMessageRequest {
-  userId: string;
+  userId?: string;           // mock 兼容；真实后端身份来自 Bearer Token
   content: string;
   clientMessageId: string;
   ticketId?: string;        // 多轮对话：带同一工单 id 续接上下文（P1 对话记忆）
@@ -75,6 +83,7 @@ export interface AdminMetrics {
   queueDepth?: number | null;
   // sla 是后端普通 dict，键不被 camel 化（met_rate 保持 snake）
   sla?: { total: number; met: number; breached: number; pending: number; met_rate: number };
+  quality?: { count: number; resolution: number; tool: number; compliance: number };
 }
 
 export interface TicketSummary {
@@ -87,6 +96,7 @@ export interface TicketSummary {
   currentState: string;
   updatedAt: string;
   slaDeadline?: string;
+  assignedTo?: string;
 }
 
 export interface SessionSummary {
@@ -104,6 +114,12 @@ export interface SessionSummary {
 export interface TicketDetail extends TicketSummary {
   stateTimeline: AgentTimelineStep[];
   messages: ChatMessage[];
+}
+
+export interface TicketAction {
+  action: "assign" | "resolve" | "reject" | "close";
+  assignedTo?: string;
+  note?: string;
 }
 
 export interface SessionDetail extends ChatSession {

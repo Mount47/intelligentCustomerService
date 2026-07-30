@@ -10,6 +10,7 @@ import re
 import time
 
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ResourceAccessDenied, SupportFlowError
@@ -25,7 +26,7 @@ from app.schemas.chat import (
 from app.schemas.common import to_frontend_task_status
 from app.services import ticket_service
 
-# 工具名 → 中文标签（思考过程时间线展示用）
+# 工具名 → 中文标签（Agent 执行轨迹展示用）
 TOOL_LABELS = {
     "get_order_detail": "查询订单", "get_user_orders": "查询用户订单",
     "check_order_owner": "校验订单归属", "get_logistics_status": "查询物流",
@@ -58,50 +59,83 @@ def resolve_order_from_text(db: Session, user_id: int, content: str) -> int | No
     return None
 
 
+def _duplicate_session(
+    db: Session, user_id: int, client_message_id: str
+) -> AgentSession | None:
+    """回查消息唯一键的赢家 Session；用于快路和并发 IntegrityError 恢复。"""
+    dup = db.scalar(select(TicketMessage).where(
+        TicketMessage.user_id == user_id,
+        TicketMessage.client_message_id == client_message_id,
+    ))
+    if dup is None:
+        return None
+    exact = db.scalar(select(AgentSession).where(
+        AgentSession.source_message_id == dup.id))
+    if exact is not None:
+        return exact
+    # 兼容迁移前的历史行；新写入始终走 source_message_id 精确关联。
+    return db.scalar(select(AgentSession).where(
+        AgentSession.ticket_id == dup.ticket_id).order_by(desc(AgentSession.id)))
+
+
 def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, bool]:
-    # 1 消息幂等去重（§9.1）
+    if payload.user_id is None:
+        raise SupportFlowError("authenticated user_id is required")
+    # 1 消息幂等快路（§9.1）。它只省工作，不承担并发正确性；
+    # 真并发由 ticket_messages 唯一约束裁决，失败方在下方回查赢家。
     if payload.client_message_id:
-        dup = db.scalar(select(TicketMessage).where(
-            TicketMessage.user_id == payload.user_id,
-            TicketMessage.client_message_id == payload.client_message_id,
-        ))
-        if dup:
-            sess = db.scalar(select(AgentSession).where(
-                AgentSession.ticket_id == dup.ticket_id).order_by(desc(AgentSession.id)))
-            if sess:
-                return sess, True
+        sess = _duplicate_session(db, payload.user_id, payload.client_message_id)
+        if sess is not None:
+            return sess, True
 
-    # 2 建/取 ticket（order_id 优先用入参，否则从消息文本解析）
-    order_id = payload.order_id
-    if order_id is not None:
-        order = db.get(Order, order_id)
-        if order is None or order.user_id != payload.user_id:
-            raise ResourceAccessDenied("order does not belong to user")
-    if order_id is None:
-        order_id = resolve_order_from_text(db, payload.user_id, payload.content)
-    if payload.ticket_id is not None:
-        ticket = db.get(Ticket, payload.ticket_id)
-        if ticket is None:
-            raise SupportFlowError("ticket not found")
-        if ticket.user_id != payload.user_id:
-            raise ResourceAccessDenied("ticket does not belong to user")
-        if order_id is not None and ticket.order_id not in (None, order_id):
-            raise ResourceAccessDenied("ticket is already bound to another order")
-        if ticket.order_id is None and order_id is not None:
-            ticket = ticket_service.bind_order(db, ticket.id, order_id)
-    else:
-        ticket = ticket_service.create_ticket(
-            db, payload.user_id, category="chat", order_id=order_id)
+    try:
+        # savepoint 把 loser 新建的 Ticket/SLA/Message/Session 一起回滚，不污染外层请求事务。
+        with db.begin_nested():
+            # 2 建/取 ticket（order_id 优先用入参，否则从消息文本解析）
+            order_id = payload.order_id
+            if order_id is not None:
+                order = db.get(Order, order_id)
+                if order is None or order.user_id != payload.user_id:
+                    raise ResourceAccessDenied("order does not belong to user")
+            if order_id is None:
+                order_id = resolve_order_from_text(db, payload.user_id, payload.content)
+            if payload.ticket_id is not None:
+                ticket = db.get(Ticket, payload.ticket_id)
+                if ticket is None:
+                    raise SupportFlowError("ticket not found")
+                if ticket.user_id != payload.user_id:
+                    raise ResourceAccessDenied("ticket does not belong to user")
+                if order_id is not None and ticket.order_id not in (None, order_id):
+                    raise ResourceAccessDenied("ticket is already bound to another order")
+                if ticket.order_id is None and order_id is not None:
+                    ticket = ticket_service.bind_order(db, ticket.id, order_id)
+            else:
+                ticket = ticket_service.create_ticket(
+                    db, payload.user_id, category="chat", order_id=order_id)
 
-    # 3 落用户消息
-    ticket_service.add_message(
-        db, ticket.id, "user", payload.content,
-        user_id=payload.user_id, client_message_id=payload.client_message_id)
+            # 3 落用户消息；(user_id, client_message_id) 唯一约束是并发最终裁决。
+            source_message = ticket_service.add_message(
+                db, ticket.id, "user", payload.content,
+                user_id=payload.user_id, client_message_id=payload.client_message_id)
 
-    # 4 建 agent_session(queued)
-    sess = AgentSession(user_id=payload.user_id, ticket_id=ticket.id, task_status="queued")
-    db.add(sess)
-    db.flush()
+            # 4 建 agent_session(queued)
+            sess = AgentSession(
+                user_id=payload.user_id,
+                ticket_id=ticket.id,
+                source_message_id=source_message.id,
+                task_status="queued",
+            )
+            db.add(sess)
+            db.flush()
+    except IntegrityError:
+        if not payload.client_message_id:
+            raise
+        # PostgreSQL 唯一冲突会等待赢家事务结束；savepoint 回滚后即可读到赢家。
+        sess = _duplicate_session(db, payload.user_id, payload.client_message_id)
+        if sess is None:
+            raise
+        return sess, True
+
     db.commit()
     return sess, False
 

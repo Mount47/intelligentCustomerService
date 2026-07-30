@@ -8,7 +8,8 @@ from app.schemas.common import CamelModel
 
 
 class ChatMessageIn(CamelModel):
-    user_id: int                      # 接受 userId / user_id
+    # 兼容旧客户端仍可携带，但 API 身份只取 Bearer Token；不再信任该字段。
+    user_id: Optional[int] = None
     content: str
     client_message_id: Optional[str] = None
     ticket_id: Optional[int] = None

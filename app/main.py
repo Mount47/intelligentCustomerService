@@ -6,10 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api import admin, chat, health
+from app.api import admin, auth, chat, health
 from app.core.config import get_settings
 from app.core.exceptions import SupportFlowError
 from app.core.logging import get_logger, setup_logging
+from app.observability.tracing import use_or_create_trace_id
+from app.observability.prometheus import prometheus_middleware, router as prometheus_router
 
 
 def create_app() -> FastAPI:
@@ -27,11 +29,21 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.middleware("http")(prometheus_middleware)
+
+    @app.middleware("http")
+    async def trace_context(request: Request, call_next):
+        trace_id = use_or_create_trace_id(request.headers.get("X-Trace-ID"))
+        response = await call_next(request)
+        response.headers["X-Trace-ID"] = trace_id
+        return response
 
     # 路由（health + chat 异步闭环 + admin 运维监测）
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(admin.router)
+    app.include_router(prometheus_router)
 
     @app.get("/", tags=["meta"])
     def root() -> dict:
@@ -47,6 +59,9 @@ def create_app() -> FastAPI:
 
     logger.info("SupportFlow app initialized (provider=%s, model=%s)",
                 settings.llm_provider, settings.llm_model)
+    from app.db.session import engine
+    from app.observability.otel import configure_fastapi_otel
+    configure_fastapi_otel(app, engine)
     return app
 
 

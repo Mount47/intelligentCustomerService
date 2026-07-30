@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import uuid
 
 _trace_id: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="-")
+_SAFE_TRACE_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def new_trace_id() -> str:
@@ -19,6 +21,19 @@ def new_trace_id() -> str:
 
 def set_trace_id(tid: str) -> None:
     _trace_id.set(tid)
+
+
+def clear_trace_id() -> None:
+    """清除当前执行上下文，避免长驻 worker 的下一项任务继承旧请求。"""
+    _trace_id.set("-")
+
+
+def use_or_create_trace_id(candidate: str | None) -> str:
+    """接受安全的上游 trace id；非法/缺失时生成新的，避免日志注入。"""
+    if candidate and _SAFE_TRACE_ID.fullmatch(candidate):
+        set_trace_id(candidate)
+        return candidate
+    return new_trace_id()
 
 
 def get_trace_id() -> str:

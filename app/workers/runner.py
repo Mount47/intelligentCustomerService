@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.orm import Session
 
 from app.agent.context import AgentContext
@@ -53,26 +53,79 @@ def task_status_for(state: str) -> str:
     return "completed"
 
 
+_CLAIMABLE_TASK_STATUSES = ("queued", "failed", "timeout")
+
+
+def _claim_session(db: Session, session_id: int) -> AgentSession | None:
+    """原子抢占一次 Session。
+
+    Celery 使用 late ack，worker 可能在业务事务提交后、ACK 前退出，随后 broker 会重投。
+    只有 queued/failed/timeout 能进入 processing；completed/need_human/waiting 等状态的
+    重投直接成为幂等 no-op，避免重复回复和重复业务副作用。
+    """
+    now = datetime.utcnow()
+    result = db.execute(
+        update(AgentSession).where(
+            AgentSession.id == session_id,
+            AgentSession.task_status.in_(_CLAIMABLE_TASK_STATUSES),
+        ).values(
+            task_status="processing",
+            started_at=now,
+            finished_at=None,
+            error_message=None,
+        ).execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        return None
+    db.commit()
+    return db.get(AgentSession, session_id)
+
+
+def _source_message(db: Session, sess: AgentSession) -> TicketMessage | None:
+    """读取精确触发本 Session 的消息；仅为迁移前历史 Session 保留兼容回退。"""
+    if sess.source_message_id is not None:
+        msg = db.get(TicketMessage, sess.source_message_id)
+        if msg is None:
+            raise RuntimeError(f"source message {sess.source_message_id} not found")
+        if msg.ticket_id != sess.ticket_id or msg.user_id != sess.user_id \
+                or msg.sender_type != "user":
+            raise RuntimeError("source message does not match agent session identity")
+        return msg
+    logger.warning(
+        "agent session %s has no source_message_id; using legacy latest-message fallback",
+        sess.id,
+    )
+    return db.scalar(select(TicketMessage).where(
+        TicketMessage.ticket_id == sess.ticket_id,
+        TicketMessage.sender_type == "user").order_by(desc(TicketMessage.id)))
+
+
 def run_agent_session(db: Session, session_id: int, agent=None,
-                      raise_on_error: bool = False) -> None:
+                      raise_on_error: bool = False, trace_id: str | None = None) -> None:
     """处理一个会话。raise_on_error=True 时（celery 路径）失败会重抛以便重试；
     默认 False（线程/测试路径）吞掉异常并标记 failed/timeout。"""
-    sess = db.get(AgentSession, session_id)
-    if sess is None:
+    existing = db.get(AgentSession, session_id)
+    if existing is None:
         logger.warning("run_agent_session: session %s not found", session_id)
         return
 
-    from app.observability.tracing import new_trace_id
-    new_trace_id()   # 本次会话全链路 trace_id
+    from app.observability.tracing import new_trace_id, set_trace_id
+    if trace_id:
+        set_trace_id(trace_id)  # API → broker → worker 继承同一 trace
+    else:
+        new_trace_id()          # 直接调用/旧任务兼容：worker 自建 trace
 
-    sess.task_status = "processing"
-    sess.started_at = datetime.utcnow()
-    db.commit()
+    sess = _claim_session(db, session_id)
+    if sess is None:
+        logger.info(
+            "run_agent_session: session %s already claimed or terminal; duplicate delivery ignored",
+            session_id,
+        )
+        return
 
     try:
-        msg = db.scalar(select(TicketMessage).where(
-            TicketMessage.ticket_id == sess.ticket_id,
-            TicketMessage.sender_type == "user").order_by(desc(TicketMessage.id)))
+        msg = _source_message(db, sess)
         ticket = db.get(Ticket, sess.ticket_id)
         if msg is None or ticket is None:
             raise RuntimeError("missing user message or ticket")
@@ -118,6 +171,10 @@ def run_agent_session(db: Session, session_id: int, agent=None,
             expected_version=expected_ticket_version,
             target_state=ctx.state,
             pending_context=ctx.pending_context,
+            actor_type="agent",
+            actor_id=acct.model_name,
+            reason=decision.handoff_reason,
+            session_id=sess.id,
         )
         if ctx.state == States.RESOLVED_BY_AGENT:   # 解决 → 回填 SLA(闭环)；转人工/等待态留给后续
             sla_service.mark_resolved(db, sess.ticket_id)

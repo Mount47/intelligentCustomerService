@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.context import ToolCallRecord, ToolResult
 from app.core.logging import get_logger
+from app.core.redaction import redact_text, redact_value
 from app.db.models import AgentToolCall
 from app.llm.base import ToolSpec
 
@@ -67,6 +68,22 @@ class ToolRegistry:
             if (t := self._tools.get(n))
         ]
 
+    @staticmethod
+    def audit(ctx: ToolContext, record: ToolCallRecord) -> None:
+        """统一落审计；成功、工具异常、白名单拒绝和 guardrail 拒绝都走这里。"""
+        if ctx.session_id is None:
+            return
+        ctx.db.add(AgentToolCall(
+            session_id=ctx.session_id,
+            tool_name=record.tool_name,
+            input_json=redact_value(record.input_json or {}),
+            output_json=redact_value(record.result.get("data")),
+            success=record.success,
+            latency_ms=record.latency_ms,
+            error_message=redact_text(record.error_message) if record.error_message else None,
+        ))
+        ctx.db.flush()
+
     def execute(self, ctx: ToolContext, name: str, args: dict) -> tuple[ToolResult, ToolCallRecord]:
         start = time.perf_counter()
         tool = self._tools.get(name)
@@ -86,13 +103,6 @@ class ToolRegistry:
             tool_name=name, input_json=args or {}, result=result,
             success=success, latency_ms=latency, error_message=error_msg,
         )
-        # 自动写审计（有 session 时）
-        if ctx.session_id is not None:
-            ctx.db.add(AgentToolCall(
-                session_id=ctx.session_id, tool_name=name, input_json=args or {},
-                output_json=result.get("data"), success=success,
-                latency_ms=latency, error_message=error_msg,
-            ))
-            ctx.db.flush()
+        self.audit(ctx, record)
         logger.info("tool %s ok=%s latency=%dms", name, success, latency)
         return result, record

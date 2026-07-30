@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -42,16 +42,19 @@ def mark_resolved(db: Session, ticket_id: int, now: datetime | None = None) -> l
 def sla_stats(db: Session, now: datetime | None = None) -> dict:
     """SLA 达成统计（运维可观测）。breached = 解决迟了 或 未解决已过期（正在违约）。"""
     now = now or datetime.utcnow()
-    recs = list(db.scalars(select(SlaRecord)).all())
-    met = breached = pending = 0
-    for r in recs:
-        if r.resolved_at is not None:
-            breached += 1 if (r.is_timeout or r.resolved_at > r.deadline) else 0
-            met += 0 if (r.is_timeout or r.resolved_at > r.deadline) else 1
-        elif now > r.deadline:               # 未解决且已过期 → 当前正在违约（该告警）
-            breached += 1
-        else:
-            pending += 1
-    total = len(recs)
+    total = db.scalar(select(func.count()).select_from(SlaRecord)) or 0
+    met = db.scalar(select(func.count()).select_from(SlaRecord).where(
+        SlaRecord.resolved_at.is_not(None),
+        SlaRecord.is_timeout.is_(False),
+        SlaRecord.resolved_at <= SlaRecord.deadline,
+    )) or 0
+    breached = db.scalar(select(func.count()).select_from(SlaRecord).where(or_(
+        and_(
+            SlaRecord.resolved_at.is_not(None),
+            or_(SlaRecord.is_timeout.is_(True), SlaRecord.resolved_at > SlaRecord.deadline),
+        ),
+        and_(SlaRecord.resolved_at.is_(None), SlaRecord.deadline < now),
+    ))) or 0
+    pending = max(0, total - met - breached)
     return {"total": total, "met": met, "breached": breached, "pending": pending,
             "met_rate": round(met / total, 3) if total else 1.0}

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-import sys
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -60,13 +60,16 @@ def _make_order(db, main_uid: int, other_uid: int, spec: dict, case_id: str) -> 
     return o.id
 
 
-def evaluate(real: bool = False, judge_real: bool = False) -> tuple[dict, list[dict]]:
+def evaluate(
+    real: bool = False, judge_real: bool = False, cases_path: Path | None = None
+) -> tuple[dict, list[dict]]:
     """real：Agent 用真实模型；judge_real：第二层 LLM-Judge 用真实模型打分。
 
     默认双 stub（不调 API、确定性、CI 友好）。judge 始终运行：stub 据断言信号折算质量分，
     real 让裁判读回复正文做语义打分（盲评，prompt 不含生产模型身份）。
     """
-    cases = json.loads(_CASES.read_text(encoding="utf-8"))
+    selected_cases = cases_path or _CASES
+    cases = json.loads(selected_cases.read_text(encoding="utf-8"))
     Session = _session_factory()
 
     if real:
@@ -119,6 +122,7 @@ def _eval_turn(db, agent, judge, exp: dict, tag: str, user_id: int,
             "count_ok": True, "forbidden_hits": [], "tool_calls_total": 0,
             "tool_calls_ok": 0, "total_tokens": 0, "cost": 0.0,
             "final_status": "access_denied",
+            "reply": reply,
             "predicted": {"intent": None, "skill": None, "state": "access_denied"},
             "expected": {"intent": exp.get("expected_intent"), "skill": exp.get("expected_skill"),
                          "state": exp.get("expected_final_status")},
@@ -160,6 +164,7 @@ def _eval_turn(db, agent, judge, exp: dict, tag: str, user_id: int,
         "total_tokens": view.token_usage.total_tokens,
         "cost": view.token_usage.estimated_cost,
         "final_status": view.final_status,
+        "reply": reply,
         "predicted": {"intent": view.current_intent, "skill": view.current_skill,
                       "state": view.final_status},
         "expected": {"intent": exp.get("expected_intent"), "skill": exp.get("expected_skill"),
@@ -169,16 +174,35 @@ def _eval_turn(db, agent, judge, exp: dict, tag: str, user_id: int,
     return r, sess.ticket_id
 
 
-def main() -> int:
-    real = "--real" in sys.argv
-    judge_real = "--judge-real" in sys.argv      # 第二层裁判用真实模型（会调 API）
-    summary, results = evaluate(real=real, judge_real=judge_real)
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="SupportFlow Agent evaluation")
+    parser.add_argument("--real", action="store_true", help="Agent 使用 .env 的真实 provider")
+    parser.add_argument("--judge-real", action="store_true", help="Judge 使用真实 provider")
+    parser.add_argument(
+        "--confirm-paid-run", action="store_true",
+        help="确认本次真实模型调用可能产生费用；--real/--judge-real 必须显式提供",
+    )
+    parser.add_argument(
+        "--cases", type=Path, default=_CASES,
+        help="评测数据集 JSON；语义泛化集可用 app/eval/semantic_cases.json",
+    )
+    parser.add_argument("--output", type=Path, help="完整 JSON 报告输出路径")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    if (args.real or args.judge_real) and not args.confirm_paid_run:
+        print("拒绝执行：真实模型评测可能产生费用，请显式添加 --confirm-paid-run。")
+        return 2
+    summary, results = evaluate(
+        real=args.real, judge_real=args.judge_real, cases_path=args.cases)
 
     fails = [r for r in results
              if not (r["intent_ok"] and r["skill_ok"] and r["state_ok"]
                      and r["handoff_ok"] and r.get("count_ok", True) and not r["forbidden_hits"])]
-    jt = "REAL" if judge_real else "STUB"
-    print(f"\n=== 评测 (agent={'REAL' if real else 'STUB'} / judge={jt}) — {summary['cases']} cases ===")
+    jt = "REAL" if args.judge_real else "STUB"
+    print(f"\n=== 评测 (agent={'REAL' if args.real else 'STUB'} / judge={jt}) — {summary['cases']} cases ===")
     for k, v in summary.items():
         if k != "cases":
             print(f"  {k:32s}: {v}")
@@ -198,6 +222,37 @@ def main() -> int:
         print(f"   - {r['case_id']}: overall={j['overall']} "
               f"acc={j['accuracy']} help={j['helpfulness']} comp={j['compliance']} tone={j['tone']}"
               f"  {j.get('reason','')[:40]}")
+    if args.output:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        report = {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "dataset": str(args.cases),
+            "agent": {
+                "mode": "real" if args.real else "stub",
+                "provider": settings.llm_provider if args.real else "stub",
+                "model": settings.llm_model if args.real else "stub-llm",
+            },
+            "judge": {
+                "mode": "real" if args.judge_real else "stub",
+                "model": (
+                    settings.judge_model or settings.llm_model
+                    if args.judge_real else "stub-judge"
+                ),
+            },
+            "honest_boundaries": [
+                "stub judge scores are deterministic assertion-derived regression signals",
+                "real model results depend on provider version, model version and sampling behavior",
+                "load/access throughput is not measured by this evaluation",
+            ],
+            "summary": summary,
+            "results": results,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n  report: {args.output}")
     return 0
 
 

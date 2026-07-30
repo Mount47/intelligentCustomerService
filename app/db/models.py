@@ -45,6 +45,9 @@ class User(_Created, Base):
     phone: Mapped[Optional[str]] = mapped_column(String(32))      # 选填，可用于人工回访
     email: Mapped[Optional[str]] = mapped_column(String(128))     # 选填
     user_level: Mapped[str] = mapped_column(String(16), default="normal")  # 会员等级 normal|vip|...，影响优先级/SLA
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
 # ── 订单表 ───────────────────────────────────────────────────────────────
@@ -179,6 +182,20 @@ class Ticket(Base):
     )
 
 
+# ── 工单状态变更历史 ────────────────────────────────────────────────────────
+class TicketStateTransition(_Created, Base):
+    """持久化状态机审计；日志用于排障，本表用于管理端时间线与合规复盘。"""
+    __tablename__ = "ticket_state_transitions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    from_state: Mapped[Optional[str]] = mapped_column(String(24))
+    to_state: Mapped[str] = mapped_column(String(24), index=True)
+    actor_type: Mapped[str] = mapped_column(String(16), default="system")
+    actor_id: Mapped[Optional[str]] = mapped_column(String(64))
+    reason: Mapped[Optional[str]] = mapped_column(String(255))
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("agent_sessions.id"), index=True)
+
+
 # ── 工单消息表（对话记录）─────────────────────────────────────────────────
 # 用处：一个工单下的所有往来消息（用户问、Agent 答、人工答、系统提示），即聊天记录。
 # 关联：属于一个 Ticket（ticket_id）；用户消息额外记 user_id。
@@ -206,7 +223,7 @@ class TicketMessage(_Created, Base):
 # 关联：属于 User + Ticket；下挂多条 AgentToolCall（本次会话调了哪些工具）；被质检表引用。
 # 为什么把这么多字段放一起：
 #   · task_status/error/retry：支撑"异步入队→轮询"闭环与 worker 失败重试（链路见 runner.py）；
-#   · current_intent/skill/state + final_status：前端"思考过程时间线"和评测准确率都读它；
+#   · current_intent/skill/state + final_status：前端执行轨迹和评测准确率都读它；
 #   · token/cost 一组字段：成本可观测，运维端看每次会话花了多少钱、是否命中缓存。
 #   一句话：这张表既是"任务表"又是"埋点表"，是把 LLM 黑盒变得可观测、可计费、可重试的关键。
 class AgentSession(Base):
@@ -214,6 +231,11 @@ class AgentSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), index=True)
+    # 精确绑定触发本次处理的用户消息。否则同一 Ticket 多轮后重放旧 client_message_id，
+    # 只能按 ticket 回查到“最新 Session”，会把旧请求错误映射成新一轮。
+    source_message_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("ticket_messages.id"), unique=True, index=True
+    )
     current_intent: Mapped[Optional[str]] = mapped_column(String(32))  # 识别出的意图（退款/物流…）
     current_skill: Mapped[Optional[str]] = mapped_column(String(32))   # 路由到的技能
     current_state: Mapped[Optional[str]] = mapped_column(String(24))   # 当前状态机状态
@@ -245,7 +267,7 @@ class AgentSession(Base):
 # 关联：属于一个 AgentSession（session_id），一次会话多条调用记录（一对多）。
 # 为什么必须有这张表：① LLM 决策是黑盒，这张表把"它到底做了什么"落到磁盘，可审计、可复盘；
 #         ② 出问题时定位是哪个工具失败/慢（latency_ms）；
-#         ③ 前端"思考过程时间线"的工具步骤、评测的 tool_call_success_rate 都来自它。
+#         ③ 前端执行轨迹的工具步骤、评测的 tool_call_success_rate 都来自它。
 #         写入是自动的——所有工具走 ToolRegistry.execute 时统一落库（见 tools/base.py），
 #         业务代码无需手动埋点。
 class AgentToolCall(_Created, Base):
@@ -282,10 +304,11 @@ class KnowledgeDoc(_Created, Base):
 # 为什么先建表不写入：v1 暂不做自动质检（QualityReviewSkill 留待后续，ADR-1/ADR-8 #5）。
 #         先把表结构定下来，是为了让数据模型一次成型、后续加质检技能时不用改表/迁移。
 class QualityReview(_Created, Base):
-    """表建好，v1 不写入（QualityReviewSkill 后续，ADR-1/ADR-8 #5）。"""
+    """异步流程质检记录；语义质量由独立真实模型评测报告衡量。"""
     __tablename__ = "quality_reviews"
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("agent_sessions.id"))
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_sessions.id"), unique=True, index=True)
     ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"))
     resolution_score: Mapped[Optional[int]] = mapped_column(Integer)        # 解决度评分
     tool_call_correctness: Mapped[Optional[int]] = mapped_column(Integer)   # 工具调用正确性评分

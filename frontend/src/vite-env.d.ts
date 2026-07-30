@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
   readonly VITE_USE_MOCK?: "true" | "false";
   readonly VITE_ENABLE_MOCK_FALLBACK?: "true" | "false";
+  readonly VITE_API_TOKEN?: string;
 }
 
 interface ImportMeta {

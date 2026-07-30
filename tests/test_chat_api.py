@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
 from app.core.exceptions import ResourceAccessDenied
+from app.core.security import issue_access_token
 from app.db.models import Base, RefundRequest, Ticket, TicketMessage, User
 from app.db.session import get_db
 from app.main import app
@@ -36,12 +37,16 @@ def client(monkeypatch):
             s.close()
 
     app.dependency_overrides[get_db] = _override
-    dispatched: list[int] = []
-    monkeypatch.setattr("app.api.chat._dispatch", lambda sid: dispatched.append(sid))
+    dispatched: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        "app.api.chat._dispatch", lambda sid, trace_id: dispatched.append((sid, trace_id)))
     with TestSession() as s:
-        s.add(User(username="u1"))
+        user = User(username="u1")
+        s.add(user)
         s.commit()
+        token = issue_access_token(user.id)
     c = TestClient(app, raise_server_exceptions=False)
+    c.headers["Authorization"] = f"Bearer {token}"
     c.dispatched = dispatched
     try:
         yield c
@@ -55,7 +60,8 @@ def test_post_message_enqueues_and_returns(client):
     body = r.json()
     assert body["taskStatus"] == "queued" and body["dedup"] is False
     assert body["sessionId"] and body["ticketId"]
-    assert client.dispatched == [body["sessionId"]]    # 入队一次
+    assert [sid for sid, _ in client.dispatched] == [body["sessionId"]]    # 入队一次
+    assert client.dispatched[0][1] == r.headers["X-Trace-ID"]
 
 
 def test_message_idempotency_no_double_enqueue(client):
@@ -64,7 +70,7 @@ def test_message_idempotency_no_double_enqueue(client):
     r2 = client.post("/api/chat/message", json=payload).json()
     assert r2["dedup"] is True
     assert r1["sessionId"] == r2["sessionId"]
-    assert client.dispatched == [r1["sessionId"]]      # 只入队一次
+    assert [sid for sid, _ in client.dispatched] == [r1["sessionId"]]      # 只入队一次
 
 
 def test_get_session_initial_state(client):

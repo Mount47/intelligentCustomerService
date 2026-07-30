@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from app.schemas.chat import AgentTimelineStep, ChatMessageView, ChatSession
 from app.schemas.common import CamelModel
@@ -23,6 +23,8 @@ class AdminMetrics(CamelModel):
     avg_tokens_per_session: float = 0.0
     # SLA 闭环：{total, met, breached, pending, met_rate}（breached 含正在违约的超时工单）
     sla: dict = {}
+    # 第一层确定性质检：{count, resolution, tool, compliance}，各评分满分 5。
+    quality: dict = {}
 
 
 class TicketSummary(CamelModel):
@@ -35,6 +37,13 @@ class TicketSummary(CamelModel):
     current_state: str = ""
     updated_at: Optional[datetime] = None
     sla_deadline: Optional[datetime] = None
+    assigned_to: Optional[str] = None
+
+
+class TicketActionIn(CamelModel):
+    action: Literal["assign", "resolve", "reject", "close"]
+    assigned_to: Optional[str] = None
+    note: Optional[str] = None
 
 
 class SessionSummary(CamelModel):

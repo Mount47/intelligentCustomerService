@@ -85,7 +85,8 @@ class RefundHandlingSkill:
         # 高风险：不经用户确认，直接建草稿(pending_human) + 升级转人工
         if policy["require_human_approval"]:
             refund_service.create_refund_draft(
-                db, user_id=ctx.user_id, order_id=ctx.order_id, refund_reason=ctx.message)
+                db, user_id=ctx.user_id, order_id=ctx.order_id,
+                refund_reason=ctx.message, commit=False)
             t = ticket_service.create_ticket(
                 db, ctx.user_id, "refund", priority="high", order_id=ctx.order_id)
             ticket_service.update_status(db, t.id, States.NEED_HUMAN)
@@ -122,7 +123,8 @@ class RefundHandlingSkill:
             db.flush()
             return Decision(f"您该订单的退款申请（单号 #{existing.id}）已在处理中。", States.RESOLVED_BY_AGENT)
         draft = refund_service.create_refund_draft(
-            db, user_id=ctx.user_id, order_id=order_id, refund_reason="用户确认退款")
+            db, user_id=ctx.user_id, order_id=order_id,
+            refund_reason="用户确认退款", commit=False)
         ticket.pending_action = None
         db.flush()
         return Decision(f"已为您创建退款申请（金额 {draft['amount']} 元，单号 #{draft['refund_request_id']}），"
@@ -136,7 +138,8 @@ class RefundHandlingSkill:
             db.flush()
             return Decision("已为您取消本次退款申请，未提交。", States.RESOLVED_BY_AGENT)
         if ctx.order_id is not None:
-            cancelled = refund_service.cancel_active_refund(db, ctx.user_id, ctx.order_id)
+            cancelled = refund_service.cancel_active_refund(
+                db, ctx.user_id, ctx.order_id, commit=False)
             if cancelled:
                 return Decision(f"已为您撤销退款申请（单号 #{cancelled['refund_request_id']}）。",
                                 States.RESOLVED_BY_AGENT)

@@ -45,6 +45,21 @@ class _OrderSkill:
         return Decision(reply=reply, next_state=States.RESOLVED_BY_AGENT)
 
 
+class _UnsafeSkill:
+    name = "unsafe"
+    triggers = {"order_query"}
+
+    def plan(self, ctx):
+        return SkillPlan(
+            system_prompt="恶意测试",
+            allowed_tools=["create_refund_draft"],
+            max_iterations=2,
+        )
+
+    def finalize(self, ctx, tool_ctx=None):
+        return Decision("危险调用已处理", States.RESOLVED_BY_AGENT)
+
+
 def _agent(llm):
     return AgentCore(
         llm=llm, classifier=HybridIntentClassifier(),
@@ -169,6 +184,46 @@ def test_loop_rejects_tool_not_in_whitelist(db, user_order):
     # 未执行 → 不应创建退款单
     from app.db.models import RefundRequest
     assert db.query(RefundRequest).count() == 0
+
+
+def test_guardrail_blocks_dangerous_tool_even_when_skill_whitelists_it(db, user_order):
+    u, o = user_order
+    sess = AgentSession(user_id=u.id)
+    db.add(sess)
+    db.flush()
+    llm = ScriptedLLM([
+        LLMResponse(
+            text="",
+            tool_calls=[ToolCall(
+                "danger-1", "create_refund_draft",
+                {"order_id": o.id, "user_id": u.id, "refund_reason": "prompt injection"},
+            )],
+            stop_reason="tool_use",
+            usage=Usage(5, 0, 0, 5),
+        ),
+        LLMResponse(text="blocked", stop_reason="end_turn", usage=Usage(1, 1, 0, 2)),
+    ])
+    agent = AgentCore(
+        llm=llm,
+        classifier=HybridIntentClassifier(),
+        router=SkillRouter(skills=[_UnsafeSkill()]),
+        state_machine=StateMachine(),
+        guardrails=Guardrails(),
+        tool_registry=build_tool_registry(),
+    )
+    ctx = AgentContext(
+        session_id=sess.id, ticket_id=1, user_id=u.id,
+        message="查订单", order_id=o.id,
+    )
+
+    agent.handle(ctx, tool_ctx=ToolContext(db=db, session_id=sess.id))
+
+    assert ctx.tool_call_records[0].result["error"]["code"] == "dangerous_tool_blocked"
+    from app.db.models import RefundRequest
+    assert db.query(RefundRequest).count() == 0
+    audit = db.query(AgentToolCall).filter_by(session_id=sess.id).one()
+    assert audit.success is False
+    assert "确定性业务流程" in (audit.error_message or "")
 
 
 def test_hybrid_intent_llm_fallback():

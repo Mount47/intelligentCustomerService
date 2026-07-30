@@ -10,6 +10,7 @@
 
 判定：入队成功率>99%、错误率<1%、P95<300ms（接入层；绝对值依赖机器）。
 """
+import os
 import random
 
 from locust import HttpUser, between, task
@@ -27,13 +28,30 @@ MESSAGES = [
 class ChatUser(HttpUser):
     wait_time = between(0.1, 0.5)
 
+    def on_start(self) -> None:
+        index = random.randint(1, int(os.getenv("LOADTEST_USER_COUNT", "10")))
+        username = f"user{index:02d}"
+        password = os.getenv("LOADTEST_PASSWORD", "supportflow-user")
+        response = self.client.post(
+            "/api/auth/token",
+            json={"username": username, "password": password},
+            name="POST /auth/token",
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"loadtest login failed: {response.status_code} {response.text}")
+        self.token = response.json()["accessToken"]
+
     @task(5)
     def send_message(self) -> None:
-        payload = {"user_id": random.randint(1, 10), "content": random.choice(MESSAGES)}
+        payload = {
+            "content": random.choice(MESSAGES),
+            "clientMessageId": f"load-{random.getrandbits(96):024x}",
+        }
         with self.client.post("/api/chat/message", json=payload,
+                              headers={"Authorization": f"Bearer {self.token}"},
                               catch_response=True, name="POST /chat/message") as r:
-            if r.status_code == 200 and r.json().get("session_id") \
-                    and r.json().get("task_status") == "queued":
+            if r.status_code == 200 and r.json().get("sessionId") \
+                    and r.json().get("taskStatus") == "queued":
                 r.success()                      # 入队成功
             else:
                 r.failure(f"enqueue failed: {r.status_code} {r.text[:120]}")

@@ -306,11 +306,21 @@ class AgentCore:
         if tc.name not in allowed:
             result = {"ok": False, "data": None,
                       "error": {"code": "tool_not_allowed", "message": f"工具 {tc.name} 不在本技能白名单"}}
-            ctx.tool_call_records.append(
-                ToolCallRecord(tc.name, tc.arguments, result, False, 0, "not allowed"))
+            record = ToolCallRecord(tc.name, tc.arguments, result, False, 0, "not allowed")
+            ctx.tool_call_records.append(record)
+            if tool_ctx is not None and self.tools is not None:
+                self.tools.audit(tool_ctx, record)
             return result
-        # 危险动作闸门（高风险退款由 service 兜底为 pending_human；M5 Skill 再加人工确认）
-        self.guardrails.precheck(tc.name, tc.arguments)
+        # 危险写工具绝不由 LLM 执行；确定性写操作只在 Skill.finalize 内发生。
+        if not self.guardrails.precheck(tc.name, tc.arguments):
+            message = f"危险工具 {tc.name} 只能由确定性业务流程执行"
+            result = {"ok": False, "data": None,
+                      "error": {"code": "dangerous_tool_blocked", "message": message}}
+            record = ToolCallRecord(tc.name, tc.arguments, result, False, 0, message)
+            ctx.tool_call_records.append(record)
+            if tool_ctx is not None and self.tools is not None:
+                self.tools.audit(tool_ctx, record)
+            return result
         if tool_ctx is None or self.tools is None:
             result = {"ok": False, "data": None,
                       "error": {"code": "no_tool_context", "message": "缺少工具执行上下文"}}

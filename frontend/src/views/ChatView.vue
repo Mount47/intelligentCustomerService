@@ -4,7 +4,7 @@ import { CircleCheck, Clock, Cpu, Message, Plus, RefreshRight, Warning } from "@
 import { api } from "../api/client";
 import type { AgentTimelineStep, ChatSession, TaskStatus } from "../api/types";
 
-// 模拟登录账号（对应 seed_data / seed_bulk 造的用户）；真实产品应替换为登录鉴权
+// 仅 mock 模式切换演示账号；真实接口身份来自 VITE_API_TOKEN。
 const demoAccounts = [
   { id: "11", label: "demo（场景订单专用，见 seed_data 对照表）" },
   { id: "13", label: "bulk_user001" },
@@ -22,7 +22,7 @@ const sending = ref(false);
 const error = ref("");
 const streaming = ref(false);   // 是否正经由 SSE 实时接收
 let pollTimer: number | undefined;
-let es: EventSource | undefined;
+let streamAbort: AbortController | undefined;
 
 // 新对话：丢弃当前工单与会话，下一条消息会新建工单
 function newConversation() {
@@ -77,39 +77,41 @@ function stopPoll() {
   pollTimer = undefined;
 }
 
-// 优先用 SSE 实时接收进度；mock/不支持/连接异常 → 退回轮询，保证仍拿得到结果
+// 使用 fetch ReadableStream 消费 SSE，因此可携带 Authorization: Bearer。
 function startStream(id: string) {
   stopStream();
-  if (api.useMock || typeof EventSource === "undefined") {
+  if (api.useMock || typeof ReadableStream === "undefined") {
     void refreshSession(id);   // 退回轮询
     return;
   }
   loading.value = true;
   let gotData = false;
-  const source = new EventSource(api.streamSessionUrl(id));
-  es = source;
+  const controller = new AbortController();
+  streamAbort = controller;
   streaming.value = true;
-  source.onmessage = (ev) => {            // 每条 data: 推送 → 整份会话视图
-    gotData = true;
-    loading.value = false;
-    try { session.value = JSON.parse(ev.data) as ChatSession; } catch { /* 忽略坏帧 */ }
-  };
-  source.addEventListener("done", () => { // 终态收尾：主动关闭，避免 EventSource 自动重连
-    source.close();
-    if (es === source) { es = undefined; streaming.value = false; }
+  void api.streamChatSession(
+    id,
+    (next) => {
+      gotData = true;
+      loading.value = false;
+      session.value = next;
+    },
+    controller.signal
+  ).catch((err) => {
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    if (!gotData) void refreshSession(id);
+  }).finally(() => {
+    if (streamAbort === controller) {
+      streamAbort = undefined;
+      streaming.value = false;
+    }
     loading.value = false;
   });
-  source.onerror = () => {                 // 连接异常：关闭并退回轮询（仅在没拿到数据时）
-    source.close();
-    if (es === source) { es = undefined; streaming.value = false; }
-    loading.value = false;
-    if (!gotData) void refreshSession(id);
-  };
 }
 
 function stopStream() {
-  es?.close();
-  es = undefined;
+  streamAbort?.abort();
+  streamAbort = undefined;
   streaming.value = false;
   stopPoll();
 }
@@ -122,7 +124,7 @@ async function submitMessage() {
   stopPoll();
   try {
     const response = await api.sendMessage({
-      userId: userId.value,
+      ...(api.useMock ? { userId: userId.value } : {}),
       content,
       clientMessageId: `web-${Date.now()}`,
       ticketId: ticketId.value          // 第二条起带上工单 id，后端续接上下文
@@ -144,7 +146,7 @@ onBeforeUnmount(stopStream);
   <section class="workspace chat-layout">
     <header class="page-head">
       <div>
-        <p class="eyebrow">用户端 /chat · 模拟登录（演示用，非真实鉴权）</p>
+        <p class="eyebrow">用户端 /chat · Bearer 身份认证</p>
         <h1>售后对话</h1>
       </div>
       <el-button :icon="Plus" plain size="small" @click="newConversation">新对话</el-button>
@@ -181,7 +183,7 @@ onBeforeUnmount(stopStream);
         </div>
 
         <form class="composer" @submit.prevent="submitMessage">
-          <el-select v-model="userId" class="user-input" aria-label="模拟登录账号">
+          <el-select v-if="api.useMock" v-model="userId" class="user-input" aria-label="模拟登录账号">
             <el-option v-for="acc in demoAccounts" :key="acc.id" :label="acc.label" :value="acc.id" />
           </el-select>
           <el-input
@@ -201,7 +203,7 @@ onBeforeUnmount(stopStream);
       <aside class="trace-panel">
         <div class="panel-title">
           <el-icon><Cpu /></el-icon>
-          <span>思考过程</span>
+          <span>Agent 执行轨迹</span>
           <el-tag v-if="streaming" size="small" type="success">实时流式</el-tag>
           <el-tag v-else-if="isPolling" size="small" type="warning">轮询中</el-tag>
         </div>

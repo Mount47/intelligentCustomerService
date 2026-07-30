@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from app.core.logging import get_logger, setup_logging
+from app.core.security import hash_password
 from app.db.init_db import init_db
 from app.db.models import (
     AgentSession,
@@ -149,6 +150,7 @@ def seed_bulk() -> None:
                 phone=_gen_phone(rng),
                 email=f"user{i}_{surname}@example.com",
                 user_level=level,
+                password_hash=hash_password("supportflow-user"),
             )
             users.append(u)
         db.add_all(users)

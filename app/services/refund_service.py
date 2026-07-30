@@ -89,7 +89,14 @@ def _result(rr: RefundRequest, **flags) -> dict:
 def create_refund_draft(
     db: Session, *, user_id: int, order_id: int, refund_reason: str | None,
     idempotency_key: str | None = None, now: datetime | None = None,
+    commit: bool = True,
 ) -> dict:
+    """创建退款草稿。
+
+    ``commit=True`` 保留 service 独立调用时的原有契约；Agent 主链路传
+    ``commit=False``，让退款写入与回复、工单状态 CAS 处于同一外层事务。
+    PostgreSQL 的唯一约束竞争放在 savepoint 中处理，冲突只回滚本次 INSERT。
+    """
     now = now or datetime.utcnow()
     order = order_service.get_order(db, order_id)
     if not order:
@@ -115,7 +122,7 @@ def create_refund_draft(
             raise IdempotencyKeyConflict("same idempotency_key with different request params")
         return _result(existing, idempotent_hit=True)
 
-    # 层2：业务键去重（防 Agent/LLM 重试换措辞）
+    # 层2：相同规范化业务参数去重；跨轮换措辞由 get_active_refund 额外防重。
     existing_b = db.scalar(
         select(RefundRequest).where(RefundRequest.business_key == business_key)
     )
@@ -131,12 +138,21 @@ def create_refund_draft(
         idempotency_key=idem, business_key=business_key, request_hash=request_hash,
         status="pending_human" if require_human else "draft",
     )
-    db.add(rr)
-    # 层3：DB 唯一约束兜底——并发竞争失败则回查赢家
+    # 层3：DB 唯一约束兜底——并发竞争失败则回查赢家。
+    # PostgreSQL 用 savepoint，唯一冲突只回滚本次 INSERT。sqlite 的驱动在尚无真实写事务时
+    # RELEASE 最外层 savepoint 可能直接提交，因此 Agent 外层事务下改用普通 flush。
+    use_savepoint = commit or db.get_bind().dialect.name != "sqlite"
     try:
-        db.commit()
+        if use_savepoint:
+            with db.begin_nested():
+                db.add(rr)
+                db.flush()
+        else:
+            db.add(rr)
+            db.flush()
     except IntegrityError:
-        db.rollback()
+        if not use_savepoint:
+            db.rollback()
         winner = db.scalar(
             select(RefundRequest).where(RefundRequest.business_key == business_key)
         ) or db.scalar(
@@ -148,7 +164,9 @@ def create_refund_draft(
         if winner is None:  # 理论不该发生
             raise
         return _result(winner, race_dedup=True)
-    db.refresh(rr)
+    if commit:
+        db.commit()
+        db.refresh(rr)
     return _result(rr, created=True)
 
 
@@ -176,11 +194,16 @@ def get_active_refund(db: Session, user_id: int, order_id: int) -> RefundRequest
     )
 
 
-def cancel_active_refund(db: Session, user_id: int, order_id: int) -> dict | None:
+def cancel_active_refund(
+    db: Session, user_id: int, order_id: int, *, commit: bool = True
+) -> dict | None:
     """撤销该订单进行中的退款（draft/pending_human → cancelled）。无则返回 None。"""
     rr = get_active_refund(db, user_id, order_id)
     if rr is None:
         return None
     rr.status = "cancelled"
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return _result(rr)

@@ -16,6 +16,14 @@ _settings = get_settings()
 # decode_responses：返回 str 而非 bytes，省去手动解码
 redis_client = redis.Redis.from_url(_settings.redis_url, decode_responses=True)
 
+# Celery broker 与业务 Redis 可以使用不同 DB/实例。队列深度必须查询 broker，
+# 不能复用业务 Redis client，否则 DB0/DB1 分离时会得到一条恒为 0 的假曲线。
+celery_broker_client = (
+    redis.Redis.from_url(_settings.celery_broker_url, decode_responses=True)
+    if _settings.celery_broker_url.startswith(("redis://", "rediss://"))
+    else None
+)
+
 
 def check_redis() -> bool:
     """健康探针：Redis 是否可达。失败不抛，返回 False。"""

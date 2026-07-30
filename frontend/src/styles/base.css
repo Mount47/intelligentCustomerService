@@ -111,6 +111,18 @@ button, textarea, input { font: inherit; }
 .brand small { margin-top: 2px; color: #8fa9a1; font-size: 12px; letter-spacing: 0.3px; }
 
 .app-nav nav { display: grid; gap: 6px; }
+.nav-session {
+  margin-top: auto;
+  padding: 14px 12px 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  display: grid;
+  gap: 3px;
+  color: #dcebe6;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.nav-session small { color: #7fa097; text-transform: uppercase; }
+.nav-session .el-button { justify-content: flex-start; margin-top: 6px; color: #b9d3cb; }
 
 .app-nav a {
   display: flex; align-items: center; gap: 11px;
@@ -131,6 +143,34 @@ button, textarea, input { font: inherit; }
 
 .app-main { min-width: 0; }
 .workspace { padding: 34px 38px; max-width: 1320px; }
+
+/* ---------- 登录 ---------- */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-card {
+  width: min(460px, 100%);
+  padding: 38px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+}
+.login-copy { color: var(--muted); line-height: 1.7; margin: 15px 0 24px; }
+.login-form { display: grid; gap: 14px; }
+.login-demo {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
 
 /* ---------- 页头 ---------- */
 .page-head {
@@ -228,7 +268,7 @@ h1 {
 }
 .user-input .el-input__wrapper { height: 56px; }
 
-/* ---------- 思考过程时间线 ---------- */
+/* ---------- Agent 执行轨迹 ---------- */
 .trace-panel { padding: 22px; animation: fadeUp 0.6s both; }
 .panel-title {
   display: flex; align-items: center; gap: 9px;
@@ -306,9 +346,29 @@ h1 {
 .dashboard-panel { padding: 20px; min-width: 0; animation: fadeUp 0.5s both; }
 .chart-box { height: 280px; }
 .quality-panel p { color: var(--muted); line-height: 1.75; margin: 0; }
+.quality-scores { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.quality-scores span {
+  padding: 10px;
+  border-radius: 9px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+.quality-scores strong { display: block; margin-top: 4px; color: var(--primary-deep); font: 600 20px var(--font-mono); }
 
 .detail-head { margin-bottom: 14px; }
 .detail-head strong { font-family: var(--font-mono); font-size: 15px; }
+.human-actions {
+  display: grid;
+  grid-template-columns: 130px minmax(180px, 1fr);
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+.human-actions > div:last-child { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
 .cost-row strong { font-family: var(--font-mono); }
 
 .tool-log {

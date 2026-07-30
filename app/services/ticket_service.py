@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.state_machine import StateMachine, States
 from app.core.exceptions import ConcurrentStateUpdate, SupportFlowError
-from app.db.models import Ticket, TicketMessage
+from app.db.models import Ticket, TicketMessage, TicketStateTransition
 from app.services import sla_service
 
 _sm = StateMachine()
@@ -38,11 +38,19 @@ def create_ticket(
     )
     db.add(t)
     db.flush()
+    db.add(TicketStateTransition(
+        ticket_id=t.id, from_state=None, to_state=States.CREATED,
+        actor_type="system", reason="ticket_created",
+    ))
     sla_service.create_sla_record(db, t.id, "resolution", deadline)
     return t
 
 
-def update_status(db: Session, ticket_id: int, target_state: str) -> Ticket:
+def update_status(
+    db: Session, ticket_id: int, target_state: str, *,
+    actor_type: str = "system", actor_id: str | None = None,
+    reason: str | None = None, session_id: int | None = None,
+) -> Ticket:
     t = db.get(Ticket, ticket_id)
     if not t:
         raise SupportFlowError(f"ticket {ticket_id} not found")
@@ -50,12 +58,15 @@ def update_status(db: Session, ticket_id: int, target_state: str) -> Ticket:
     return persist_agent_state(
         db, ticket_id, expected_state=t.status, expected_version=t.version,
         target_state=target, pending_context=t.pending_context,
+        actor_type=actor_type, actor_id=actor_id, reason=reason, session_id=session_id,
     )
 
 
 def persist_agent_state(
     db: Session, ticket_id: int, *, expected_state: str, expected_version: int,
     target_state: str, pending_context: dict | None,
+    actor_type: str = "agent", actor_id: str | None = None,
+    reason: str | None = None, session_id: int | None = None,
 ) -> Ticket:
     """用 DB 条件更新持久化状态；rowcount=0 表示当前事务已过期，必须整体回滚。"""
     result = db.execute(
@@ -74,6 +85,15 @@ def persist_agent_state(
             f"ticket {ticket_id} state/version changed concurrently "
             f"(expected {expected_state}@v{expected_version})"
         )
+    db.add(TicketStateTransition(
+        ticket_id=ticket_id,
+        from_state=expected_state,
+        to_state=target_state,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        reason=reason,
+        session_id=session_id,
+    ))
     t = db.get(Ticket, ticket_id)
     if t is None:
         raise SupportFlowError(f"ticket {ticket_id} not found after state update")
@@ -119,7 +139,10 @@ def bind_order(db: Session, ticket_id: int, order_id: int) -> Ticket:
 
 def handoff(db: Session, ticket_id: int, reason: str, assigned_to: str | None = None) -> Ticket:
     """转人工：状态 → need_human（经状态机校验合法性）。"""
-    t = update_status(db, ticket_id, States.NEED_HUMAN)
+    t = update_status(
+        db, ticket_id, States.NEED_HUMAN,
+        actor_type="agent", reason=reason,
+    )
     if assigned_to:
         t.assigned_to = assigned_to
     db.flush()

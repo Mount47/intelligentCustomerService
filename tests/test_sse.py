@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.models import AgentSession, Base, Ticket, TicketMessage, User
+from app.core.security import issue_access_token
 from app.db.session import get_db
 from app.main import app
 from app.services.chat_service import stream_session_events
@@ -81,8 +82,11 @@ def client():
         s.add(TicketMessage(ticket_id=t.id, sender_type="agent", content="已为您处理"))
         s.add(AgentSession(id=1, user_id=u.id, ticket_id=t.id, task_status="completed"))
         s.commit()
+        token = issue_access_token(u.id)
     try:
-        yield TestClient(app)
+        client = TestClient(app)
+        client.headers["Authorization"] = f"Bearer {token}"
+        yield client
     finally:
         app.dependency_overrides.clear()
 

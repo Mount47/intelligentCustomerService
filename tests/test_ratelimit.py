@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.ratelimit import allow_request
+from app.core.security import issue_access_token
 from app.db.models import Base, User
 from app.db.session import get_db
 from app.main import app
@@ -71,12 +72,16 @@ def client(monkeypatch):
             s.close()
 
     app.dependency_overrides[get_db] = _override
-    monkeypatch.setattr("app.api.chat._dispatch", lambda sid: None)
+    monkeypatch.setattr("app.api.chat._dispatch", lambda sid, trace_id: None)
     with TestSession() as s:
-        s.add(User(username="u1"))
+        user = User(username="u1")
+        s.add(user)
         s.commit()
+        token = issue_access_token(user.id)
     try:
-        yield TestClient(app, raise_server_exceptions=False)
+        client = TestClient(app, raise_server_exceptions=False)
+        client.headers["Authorization"] = f"Bearer {token}"
+        yield client
     finally:
         app.dependency_overrides.clear()
 

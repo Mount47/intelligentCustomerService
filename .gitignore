@@ -17,5 +17,7 @@ build/
 node_modules/
 *.tsbuildinfo
 
-# 面试准备/项目文档：不纳入版本管理（本地保留）
-docs/
+# 本地面试准备不入库；公开架构文档显式纳入版本管理。
+docs/*
+!docs/architecture/
+!docs/architecture/*.md

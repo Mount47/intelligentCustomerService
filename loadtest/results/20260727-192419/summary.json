@@ -1,0 +1,28 @@
+{
+  "started_at": "2026-07-27T19:24:19.940793",
+  "elapsed_seconds": 30.202,
+  "users": 50,
+  "spawn_rate": 10,
+  "duration": "30s",
+  "environment": {
+    "platform": "macOS-26.4-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.11",
+    "worker_concurrency": 2,
+    "stub_delay_ms": 100,
+    "queue_depth_source": "Celery broker Redis LLEN(celery)"
+  },
+  "exit_code": 0,
+  "rps": "151.50453992823128",
+  "failures_per_second": "0.0",
+  "p95_ms": "68",
+  "p99_ms": "110",
+  "request_count": "4396",
+  "failure_count": "0",
+  "chat_rps": "125.00158469510802",
+  "chat_p95_ms": "70",
+  "chat_p99_ms": "110",
+  "chat_request_count": "3627",
+  "chat_failure_count": "0",
+  "max_queue_depth": 3089
+}

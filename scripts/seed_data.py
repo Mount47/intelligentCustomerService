@@ -9,6 +9,7 @@ import random
 from datetime import datetime, timedelta
 
 from app.core.logging import get_logger, setup_logging
+from app.core.security import hash_password
 from app.db.init_db import init_db
 from app.db.models import KnowledgeDoc, Logistics, Order, OrderItem, User
 from app.db.session import SessionLocal
@@ -97,8 +98,12 @@ INTENT_ONLY = [
 
 def _seed_scenarios(db, now: datetime) -> tuple[int, list[tuple]]:
     """造场景订单，返回 (demo 用户 id, [(order_id, order_no, 消息, 预期)])。"""
-    demo = User(username="demo", phone="13900000000", email="demo@example.com")
-    other = User(username="demo_other", phone="13900000001", email="other@example.com")
+    demo = User(
+        username="demo", phone="13900000000", email="demo@example.com",
+        password_hash=hash_password("supportflow-user"))
+    other = User(
+        username="demo_other", phone="13900000001", email="other@example.com",
+        password_hash=hash_password("supportflow-user"))
     db.add_all([demo, other])
     db.flush()
     rng = random.Random(7)   # 场景订单的明细也要可复现
@@ -154,7 +159,8 @@ def seed() -> None:
         users = [
             User(username=f"user{i:02d}", phone=f"1380000{i:04d}",
                  email=f"user{i:02d}@example.com",
-                 user_level="vip" if i % 5 == 0 else "normal")
+                 user_level="vip" if i % 5 == 0 else "normal",
+                 password_hash=hash_password("supportflow-user"))
             for i in range(1, 11)
         ]
         db.add_all(users)
@@ -201,11 +207,14 @@ def seed() -> None:
                 ))
 
         demo_id, rows = _seed_scenarios(db, now)
+        db.add(User(
+            username="admin", email="admin@example.com", role="admin",
+            password_hash=hash_password("supportflow-admin")))
 
         db.add_all(KnowledgeDoc(title=t, category=c, content=body) for t, c, body in POLICIES)
         db.commit()
-        logger.info("seeded: %d users(含 demo/demo_other), %d 随机单 + %d 场景单, %d policies",
-                    len(users) + 2, len(orders), len(SCENARIOS), len(POLICIES))
+        logger.info("seeded: %d users(含 demo/demo_other/admin), %d 随机单 + %d 场景单, %d policies",
+                    len(users) + 3, len(orders), len(SCENARIOS), len(POLICIES))
         _print_table(demo_id, rows)
 
 

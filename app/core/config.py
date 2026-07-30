@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_origins: str = "*"   # 逗号分隔的允许来源；本地联调默认全放开
 
+    # 认证：HMAC 签名 Bearer Token。生产必须通过环境变量替换默认开发密钥。
+    auth_secret: str = "supportflow-dev-secret-change-me"
+    auth_token_ttl_seconds: int = 3600
+
     # 数据库 / Redis
     database_url: str = "postgresql+psycopg://supportflow:supportflow@db:5432/supportflow"
     redis_url: str = "redis://redis:6379/0"
@@ -64,6 +68,13 @@ class Settings(BaseSettings):
 
     # 长对话记忆（P4）：历史 token 预算，超出的旧段摘要压缩；防上下文溢出/成本失控
     history_token_budget: int = 3000
+
+    # 工具审计保留期；清理命令 python -m scripts.purge_audit
+    audit_retention_days: int = 90
+
+    # 可观测：Prometheus 总是提供 /metrics；OTLP endpoint 为空时不初始化 exporter。
+    otel_exporter_otlp_endpoint: str = ""
+    otel_service_name: str = "supportflow-api"
 
     # LLM 熔断降级：连续失败 fail_max 次 → 熔断 reset_sec 秒，期间快速失败/走 fallback。
     circuit_breaker_enabled: bool = True

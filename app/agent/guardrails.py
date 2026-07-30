@@ -23,9 +23,14 @@ DANGEROUS_TOOLS: frozenset[str] = frozenset(
 
 class Guardrails:
     def precheck(self, tool_name: str, args: dict) -> bool:
-        """工具调用前校验。骨架默认放行；危险工具记日志（M5 接入权限/幂等/确认闸门）。"""
+        """ReAct 工具调用前硬闸。
+
+        危险写操作必须由 Skill.finalize 的确定性代码执行，LLM 即便通过提示注入或
+        provider 异常产出写工具调用，也只会得到结构化拒绝结果。
+        """
         if tool_name in DANGEROUS_TOOLS:
-            logger.info("guardrail precheck: dangerous tool %s args=%s", tool_name, args)
+            logger.warning("guardrail precheck blocked dangerous LLM tool: %s", tool_name)
+            return False
         return True
 
     def scan_forbidden(self, reply: str) -> list[str]:

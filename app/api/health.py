@@ -22,7 +22,11 @@ def health(response: Response) -> dict:
         "db": "up" if check_db() else "down",
         "redis": "up" if check_redis() else "down",
     }
-    healthy = all(v == "up" for v in components.values())
+    # thread 是明确支持的无 Redis 本地模式：Redis 不可达会让限流 fail-open，
+    # 但不影响消息处理，因此只把它标成 optional_down，不应让 readiness 返回 503。
+    if settings.agent_dispatch == "thread" and components["redis"] == "down":
+        components["redis"] = "optional_down"
+    healthy = components["db"] == "up" and components["redis"] in ("up", "optional_down")
     if not healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {

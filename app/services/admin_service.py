@@ -4,9 +4,12 @@ from __future__ import annotations
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.db.models import AgentSession, Order, Ticket, TicketMessage
+from app.agent.state_machine import States
+from app.db.models import AgentSession, Order, Ticket, TicketMessage, TicketStateTransition
 from app.observability.metrics import compute_metrics
-from app.schemas.admin import AdminMetrics, SessionSummary, TicketDetail, TicketSummary
+from app.schemas.admin import (
+    AdminMetrics, SessionSummary, TicketActionIn, TicketDetail, TicketSummary,
+)
 from app.schemas.chat import AgentTimelineStep, ChatMessageView
 from app.schemas.common import to_frontend_task_status
 
@@ -38,13 +41,24 @@ def _p95(xs: list[float]) -> float:
     return round(xs[idx], 1)
 
 
-def list_tickets(db: Session, limit: int = 100) -> list[TicketSummary]:
-    rows = db.scalars(select(Ticket).order_by(desc(Ticket.id)).limit(limit)).all()
+def list_tickets(
+    db: Session, limit: int = 100, offset: int = 0,
+    status: str | None = None, category: str | None = None,
+) -> list[TicketSummary]:
+    query = select(Ticket)
+    if status:
+        query = query.where(Ticket.status == status)
+    if category:
+        query = query.where(Ticket.category == category)
+    rows = db.scalars(
+        query.order_by(desc(Ticket.id)).offset(offset).limit(limit)
+    ).all()
     return [
         TicketSummary(
             id=t.id, user_id=t.user_id, order_no=_order_no(db, t.order_id),
             category=_cat(t.category), priority=t.priority, status=t.status,
-            current_state=t.status, updated_at=t.updated_at, sla_deadline=t.sla_deadline)
+            current_state=t.status, updated_at=t.updated_at, sla_deadline=t.sla_deadline,
+            assigned_to=t.assigned_to)
         for t in rows
     ]
 
@@ -55,12 +69,31 @@ def get_ticket_detail(db: Session, ticket_id: int) -> TicketDetail | None:
         return None
     msgs = list(db.scalars(select(TicketMessage).where(
         TicketMessage.ticket_id == t.id).order_by(TicketMessage.id)).all())
+    transitions = list(db.scalars(select(TicketStateTransition).where(
+        TicketStateTransition.ticket_id == t.id
+    ).order_by(TicketStateTransition.id)).all())
     timeline = [
-        AgentTimelineStep(id="created", kind="state", title="创建工单",
-                          detail="created", created_at=t.created_at),
-        AgentTimelineStep(id="current", kind="state", title="当前状态",
-                          detail=t.status, created_at=t.updated_at),
+        AgentTimelineStep(
+            id=f"transition-{tr.id}",
+            kind="state",
+            title="创建工单" if tr.from_state is None else f"{tr.from_state} → {tr.to_state}",
+            detail=" · ".join(filter(None, [
+                tr.to_state,
+                f"actor={tr.actor_type}" if tr.actor_type else None,
+                tr.reason,
+            ])),
+            status="success",
+            created_at=tr.created_at,
+        )
+        for tr in transitions
     ]
+    if not timeline:  # 迁移前历史数据兼容
+        timeline = [
+            AgentTimelineStep(id="created", kind="state", title="创建工单",
+                              detail="created", status="success", created_at=t.created_at),
+            AgentTimelineStep(id="current", kind="state", title="当前状态",
+                              detail=t.status, status="success", created_at=t.updated_at),
+        ]
     from app.schemas.admin import HandoffSummary
     from app.services import handoff_service
     # 交接摘要：模板模式(不调 API)；事实字段来自 DB。需真实叙述可传 llm。
@@ -69,6 +102,7 @@ def get_ticket_detail(db: Session, ticket_id: int) -> TicketDetail | None:
         id=t.id, user_id=t.user_id, order_no=_order_no(db, t.order_id),
         category=_cat(t.category), priority=t.priority, status=t.status,
         current_state=t.status, updated_at=t.updated_at, sla_deadline=t.sla_deadline,
+        assigned_to=t.assigned_to,
         state_timeline=timeline,
         messages=[ChatMessageView(id=m.id, sender=m.sender_type, content=m.content,
                                   created_at=m.created_at) for m in msgs],
@@ -76,8 +110,62 @@ def get_ticket_detail(db: Session, ticket_id: int) -> TicketDetail | None:
     )
 
 
-def list_sessions(db: Session, limit: int = 100) -> list[SessionSummary]:
-    rows = db.scalars(select(AgentSession).order_by(desc(AgentSession.id)).limit(limit)).all()
+def handle_ticket(
+    db: Session, ticket_id: int, action: TicketActionIn, *, admin_id: int
+) -> TicketDetail | None:
+    """管理员人工处理闭环：指派、解决、驳回或关闭，并追加人工处理记录。"""
+    from app.services import sla_service, ticket_service
+
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None:
+        return None
+    actor_id = str(admin_id)
+    if action.action == "assign":
+        if not action.assigned_to:
+            raise ValueError("assigned_to is required for assign")
+        ticket.assigned_to = action.assigned_to
+        if ticket.status == States.CREATED:
+            ticket_service.update_status(
+                db, ticket.id, States.NEED_HUMAN,
+                actor_type="human", actor_id=actor_id, reason=action.note or "assigned",
+            )
+        else:
+            db.add(TicketStateTransition(
+                ticket_id=ticket.id, from_state=ticket.status, to_state=ticket.status,
+                actor_type="human", actor_id=actor_id,
+                reason=action.note or f"assigned_to:{action.assigned_to}",
+            ))
+    else:
+        targets = {
+            "resolve": States.RESOLVED_BY_HUMAN,
+            "reject": States.REJECTED,
+            "close": States.CLOSED,
+        }
+        target = targets[action.action]
+        ticket_service.update_status(
+            db, ticket.id, target,
+            actor_type="human", actor_id=actor_id, reason=action.note or action.action,
+        )
+        if target == States.RESOLVED_BY_HUMAN:
+            sla_service.mark_resolved(db, ticket.id)
+    if action.note:
+        ticket_service.add_message(
+            db, ticket.id, "human", action.note,
+        )
+    db.commit()
+    return get_ticket_detail(db, ticket.id)
+
+
+def list_sessions(
+    db: Session, limit: int = 100, offset: int = 0,
+    task_status: str | None = None,
+) -> list[SessionSummary]:
+    query = select(AgentSession)
+    if task_status:
+        query = query.where(AgentSession.task_status == task_status)
+    rows = db.scalars(
+        query.order_by(desc(AgentSession.id)).offset(offset).limit(limit)
+    ).all()
     return [
         SessionSummary(
             id=s.id, ticket_id=s.ticket_id, current_intent=s.current_intent,
@@ -89,10 +177,19 @@ def list_sessions(db: Session, limit: int = 100) -> list[SessionSummary]:
 
 
 def build_admin_metrics(db: Session) -> AdminMetrics:
+    from app.services.quality_service import quality_stats
+
     m = compute_metrics(db)
-    sessions = list(db.scalars(select(AgentSession)).all())
-    durations = [(s.finished_at - s.started_at).total_seconds() * 1000
-                 for s in sessions if s.started_at and s.finished_at]
+    # 精确 percentile 在 PostgreSQL/SQLite 上写法不同；管理看板取最近 2000 条有界样本，
+    # 避免每次 3 秒轮询把整张 agent_sessions 拉进 Python。
+    samples = db.execute(select(
+        AgentSession.started_at, AgentSession.finished_at,
+    ).where(
+        AgentSession.started_at.is_not(None),
+        AgentSession.finished_at.is_not(None),
+    ).order_by(desc(AgentSession.id)).limit(2000)).all()
+    durations = [(finished - started).total_seconds() * 1000
+                 for started, finished in samples]
     by = m["sessions_by_task_status"]
     n = m["totals"]["sessions"]
     return AdminMetrics(
@@ -107,4 +204,5 @@ def build_admin_metrics(db: Session) -> AdminMetrics:
         total_tokens=m["cost"]["total_tokens"],
         avg_tokens_per_session=m["cost"]["avg_tokens_per_session"],
         sla=m["sla"],
+        quality=quality_stats(db),
     )

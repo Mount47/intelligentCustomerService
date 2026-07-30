@@ -1,0 +1,18 @@
+# 本地验收覆盖：强制 stub，避免真实模型费用；提高限流以便 Locust 压接入层。
+services:
+  api:
+    environment:
+      LLM_PROVIDER: stub
+      LLM_MODEL: stub
+      AGENT_DISPATCH: celery
+      CHAT_RATE_LIMIT_PER_MIN: "10000"
+      AUTH_SECRET: supportflow-verification-only-secret
+      STUB_DELAY_MS: "100"
+  worker:
+    environment:
+      LLM_PROVIDER: stub
+      LLM_MODEL: stub
+      AGENT_DISPATCH: celery
+      CHAT_RATE_LIMIT_PER_MIN: "10000"
+      AUTH_SECRET: supportflow-verification-only-secret
+      STUB_DELAY_MS: "100"

@@ -89,7 +89,9 @@ function buildSession(id: string): ChatSession {
 export const mockApi = {
   async sendMessage(req: SendMessageRequest): Promise<SendMessageResponse> {
     const sessionId = `S-${Date.now()}`;
-    sessions.set(sessionId, { createdAt: Date.now(), content: req.content, userId: req.userId });
+    sessions.set(sessionId, {
+      createdAt: Date.now(), content: req.content, userId: req.userId ?? "11"
+    });
     return { sessionId, ticketId: "T-20260618-0018", taskStatus: "queued" };
   },
   async getSession(id: string): Promise<ChatSession> {

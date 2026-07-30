@@ -25,7 +25,7 @@ def db():
 
 
 def test_all_tables_created():
-    assert len(Base.metadata.tables) == 12
+    assert len(Base.metadata.tables) == 13
 
 
 def _user_order(db):
