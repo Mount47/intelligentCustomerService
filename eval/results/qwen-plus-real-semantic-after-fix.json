@@ -1,0 +1,746 @@
+{
+  "generated_at": "2026-08-02T17:15:27.272855Z",
+  "dataset": "/Users/mount/learning/working/intelligentCustomerService/app/eval/real_scenario_cases.json",
+  "mode": "real",
+  "policy_assumptions": {
+    "refund_high_amount_threshold": 500.0,
+    "refund_return_window_days": 7,
+    "logistics_stale_hours": 48
+  },
+  "summary": {
+    "model": "qwen-plus",
+    "repetitions": 1,
+    "turns": 14,
+    "passed": 13,
+    "failed": 1,
+    "pass_rate": 0.9286,
+    "critical_turns": 3,
+    "critical_failures": 1,
+    "model_calls": 36,
+    "model_errors": 0,
+    "total_tokens": 15631,
+    "estimated_cost": 0.008591,
+    "turn_latency_ms": {
+      "mean": 4649.28,
+      "p50": 3939.98,
+      "p95": 8192.41
+    },
+    "model_latency_ms": {
+      "mean": 4633.07,
+      "p95": 8174.78
+    },
+    "categories": {
+      "semantic_understanding": {
+        "turns": 14,
+        "passed": 13,
+        "pass_rate": 0.9286
+      }
+    }
+  },
+  "results": [
+    {
+      "repetition": 1,
+      "case_id": "semantic-order-progress-colloquial",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "normal",
+      "tags": [
+        "paraphrase",
+        "order",
+        "real_model"
+      ],
+      "message": "帮忙瞅瞅前两天买的那单现在走到哪一步了",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "order_query",
+          "logistics_query"
+        ],
+        "skills": [
+          "order_query",
+          "logistics_exception"
+        ],
+        "state": "resolved_by_agent",
+        "handoff": false,
+        "any_tools": [
+          "get_order_detail",
+          "get_order_items",
+          "get_logistics_status",
+          "check_logistics_exception"
+        ],
+        "reply_any": [
+          "239.0",
+          "苏州分拨中心"
+        ],
+        "reply_none": [
+          "无法查询"
+        ]
+      },
+      "actual": {
+        "intent": "logistics_query",
+        "skill": "logistics_exception",
+        "state": "resolved_by_agent",
+        "reply": "包裹状态为运输中，最近一次物流位置是苏州分拨中心，最后更新于2026-08-02 14:14。",
+        "tools": [
+          "get_logistics_status"
+        ],
+        "successful_tools": [
+          "get_logistics_status"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 3910.95,
+      "turn_latency_ms": 3939.98,
+      "total_tokens": 860,
+      "estimated_cost": 0.000451
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-order-items-grounded",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "high",
+      "tags": [
+        "grounding",
+        "items",
+        "hallucination"
+      ],
+      "message": "我这笔单子里到底买了哪些东西？",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "order_query"
+        ],
+        "skill": "order_query",
+        "state": "resolved_by_agent",
+        "any_tools": [
+          "get_order_detail",
+          "get_order_items"
+        ],
+        "reply_all": [
+          "岩兰草洗发水",
+          "旅行分装瓶"
+        ],
+        "reply_none": [
+          "手机",
+          "电脑"
+        ]
+      },
+      "actual": {
+        "intent": "order_query",
+        "skill": "order_query",
+        "state": "resolved_by_agent",
+        "reply": "订单 EV01-05D744607C：状态 已付款；金额 178.0 元；商品：岩兰草洗发水×2、旅行分装瓶×1；付款 2026-07-21。",
+        "tools": [
+          "get_order_items"
+        ],
+        "successful_tools": [
+          "get_order_items"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 3209.61,
+      "turn_latency_ms": 3221.03,
+      "total_tokens": 960,
+      "estimated_cost": 0.000462
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-refund-indirect",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "high",
+      "tags": [
+        "implicit_intent",
+        "refund",
+        "real_model"
+      ],
+      "message": "这件东西我不打算留了，麻烦帮我走一下售后流程",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "refund_request",
+          "return_request"
+        ],
+        "skill": "refund_handling",
+        "state": "waiting_user_confirm",
+        "handoff": false,
+        "any_tools": [
+          "get_order_detail",
+          "check_refund_policy"
+        ],
+        "refund_count": 0,
+        "reply_any": [
+          "确认",
+          "是否提交"
+        ]
+      },
+      "actual": {
+        "intent": "return_request",
+        "skill": "refund_handling",
+        "state": "waiting_user_confirm",
+        "reply": "该订单可以申请退货，金额 129.0 元。请在下方确认是否提交。",
+        "tools": [
+          "get_order_detail"
+        ],
+        "successful_tools": [
+          "get_order_detail"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 6083.16,
+      "turn_latency_ms": 6098.85,
+      "total_tokens": 1483,
+      "estimated_cost": 0.000805
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-return-size-mismatch",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "high",
+      "tags": [
+        "implicit_intent",
+        "return",
+        "real_model"
+      ],
+      "message": "裤子尺码小了一号，穿不了，想寄回去处理",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "return_request"
+        ],
+        "skill": "refund_handling",
+        "state": "waiting_user_confirm",
+        "refund_count": 0,
+        "reply_any": [
+          "退货",
+          "确认"
+        ]
+      },
+      "actual": {
+        "intent": "return_request",
+        "skill": "refund_handling",
+        "state": "waiting_user_confirm",
+        "reply": "该订单可以申请退货，金额 199.0 元。请在下方确认是否提交。",
+        "tools": [
+          "get_order_detail",
+          "check_refund_policy"
+        ],
+        "successful_tools": [
+          "get_order_detail",
+          "check_refund_policy"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 8978.33,
+      "turn_latency_ms": 8991.49,
+      "total_tokens": 2642,
+      "estimated_cost": 0.001417
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-refund-question-not-action",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "critical",
+      "tags": [
+        "polarity",
+        "inquiry",
+        "no_write"
+      ],
+      "message": "我只是先问问，这种情况是否符合退款条件？先不要提交",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "refund_inquiry"
+        ],
+        "skill": "refund_handling",
+        "state": "resolved_by_agent",
+        "handoff": false,
+        "refund_count": 0,
+        "forbidden_tools": [
+          "create_refund_draft"
+        ],
+        "reply_none": [
+          "已创建退款"
+        ]
+      },
+      "actual": {
+        "intent": "refund_inquiry",
+        "skill": "refund_handling",
+        "state": "resolved_by_agent",
+        "reply": "该订单符合退款条件（金额 88.0 元）。如需办理请回复『我要退款』。 依据：售后退款政策 v2026.1",
+        "tools": [
+          "get_order_detail"
+        ],
+        "successful_tools": [
+          "get_order_detail"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 2,
+      "model_errors": 0,
+      "model_latency_ms": 6878.25,
+      "turn_latency_ms": 6888.51,
+      "total_tokens": 1629,
+      "estimated_cost": 0.000959
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-logistics-typo-and-colloquial",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "normal",
+      "tags": [
+        "typo",
+        "logistics",
+        "real_model"
+      ],
+      "message": "包果是不是卡半路了，咋一直没往我这边走",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "logistics_query",
+          "logistics_exception"
+        ],
+        "skill": "logistics_exception",
+        "state": "resolved_by_agent",
+        "any_tools": [
+          "get_logistics_status",
+          "check_logistics_exception"
+        ],
+        "reply_all": [
+          "武汉转运中心"
+        ]
+      },
+      "actual": {
+        "intent": "logistics_exception",
+        "skill": "logistics_exception",
+        "state": "resolved_by_agent",
+        "reply": "包裹状态为运输中，最近一次物流位置是武汉转运中心，最后更新于2026-08-02 11:14。",
+        "tools": [
+          "get_logistics_status",
+          "check_logistics_exception"
+        ],
+        "successful_tools": [
+          "get_logistics_status",
+          "check_logistics_exception"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 4862.68,
+      "turn_latency_ms": 4896.37,
+      "total_tokens": 1126,
+      "estimated_cost": 0.00064
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-delivered-but-missing",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "critical",
+      "tags": [
+        "logistics",
+        "handoff",
+        "colloquial"
+      ],
+      "message": "快递那头说东西交付了，但我家门口和驿站都没有",
+      "passed": false,
+      "failures": [
+        "state expected 'need_human', got 'resolved_by_agent'",
+        "handoff expected True, got False",
+        "reply misses all alternative text: ['人工', '核实']"
+      ],
+      "expected": {
+        "intents": [
+          "logistics_query",
+          "logistics_exception"
+        ],
+        "skill": "logistics_exception",
+        "state": "need_human",
+        "handoff": true,
+        "reply_any": [
+          "人工",
+          "核实"
+        ]
+      },
+      "actual": {
+        "intent": "logistics_query",
+        "skill": "logistics_exception",
+        "state": "resolved_by_agent",
+        "reply": "包裹状态为已签收，最近一次物流位置是小区驿站，最后更新于2026-08-02 12:14。",
+        "tools": [
+          "get_logistics_status",
+          "check_logistics_exception"
+        ],
+        "successful_tools": [
+          "get_logistics_status",
+          "check_logistics_exception"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 2,
+      "model_errors": 0,
+      "model_latency_ms": 5726.06,
+      "turn_latency_ms": 5740.73,
+      "total_tokens": 1211,
+      "estimated_cost": 0.000748
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-human-colloquial",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "high",
+      "tags": [
+        "handoff",
+        "implicit_intent",
+        "real_model"
+      ],
+      "message": "别让机器人继续回了，给我找个真人聊聊",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "human_handoff"
+        ],
+        "skill": "general",
+        "state": "need_human",
+        "handoff": true,
+        "reply_any": [
+          "人工",
+          "专员"
+        ]
+      },
+      "actual": {
+        "intent": "human_handoff",
+        "skill": "general",
+        "state": "need_human",
+        "reply": "非常理解您的诉求，已为您升级人工专员跟进，请稍候。",
+        "tools": [],
+        "successful_tools": [],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 2,
+      "model_errors": 0,
+      "model_latency_ms": 2663.6,
+      "turn_latency_ms": 2670.44,
+      "total_tokens": 328,
+      "estimated_cost": 0.00022
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-complaint-emotion",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "high",
+      "tags": [
+        "emotion",
+        "complaint",
+        "real_model"
+      ],
+      "message": "收到以后根本不能正常使用，这次购物体验真的让我很火大",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "product_complaint"
+        ],
+        "skill": "general",
+        "state": "need_human",
+        "handoff": true,
+        "reply_any": [
+          "人工",
+          "专员"
+        ]
+      },
+      "actual": {
+        "intent": "product_complaint",
+        "skill": "general",
+        "state": "need_human",
+        "reply": "非常理解您的诉求，已为您升级人工专员跟进，请稍候。",
+        "tools": [
+          "search_policy_docs"
+        ],
+        "successful_tools": [
+          "search_policy_docs"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 5945.28,
+      "turn_latency_ms": 5959.21,
+      "total_tokens": 781,
+      "estimated_cost": 0.000475
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-after-sale-policy-vague",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "normal",
+      "tags": [
+        "policy",
+        "implicit_intent",
+        "real_model"
+      ],
+      "message": "东西收下以后，最晚隔多久还能找你们处理售后？",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "refund_inquiry",
+          "general_policy_query"
+        ],
+        "state": "resolved_by_agent",
+        "handoff": false,
+        "reply_none": [
+          "已创建退款",
+          "保证退款"
+        ]
+      },
+      "actual": {
+        "intent": "general_policy_query",
+        "skill": "general",
+        "state": "resolved_by_agent",
+        "reply": "根据当前政策文档检索结果，暂未找到关于“售后时效”的具体说明。建议您提供订单号或商品信息，我可进一步为您查询对应订单的售后有效期。",
+        "tools": [
+          "search_policy_docs"
+        ],
+        "successful_tools": [
+          "search_policy_docs"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 3,
+      "model_errors": 0,
+      "model_latency_ms": 2213.09,
+      "turn_latency_ms": 2223.77,
+      "total_tokens": 553,
+      "estimated_cost": 0.000268
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-negated-handoff-prefers-logistics",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "critical",
+      "tags": [
+        "negation",
+        "multi_intent",
+        "routing"
+      ],
+      "message": "别转人工，我就想知道快递现在到哪了",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "logistics_query"
+        ],
+        "skill": "logistics_exception",
+        "state": "resolved_by_agent",
+        "handoff": false,
+        "reply_all": [
+          "杭州集散中心"
+        ]
+      },
+      "actual": {
+        "intent": "logistics_query",
+        "skill": "logistics_exception",
+        "state": "resolved_by_agent",
+        "reply": "包裹状态为运输中，最近一次物流位置是杭州集散中心，最后更新于2026-08-02 13:15。",
+        "tools": [
+          "get_logistics_status"
+        ],
+        "successful_tools": [
+          "get_logistics_status"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 2,
+      "model_errors": 0,
+      "model_latency_ms": 3177.53,
+      "turn_latency_ms": 3206.89,
+      "total_tokens": 841,
+      "estimated_cost": 0.000432
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-multi-intent-final-request-wins",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "high",
+      "tags": [
+        "multi_intent",
+        "disambiguation",
+        "real_model"
+      ],
+      "message": "物流一直没动，我已经不想等了，最终诉求是把这件商品退掉",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "refund_request",
+          "return_request"
+        ],
+        "skill": "refund_handling",
+        "state": "waiting_user_confirm",
+        "refund_count": 0
+      },
+      "actual": {
+        "intent": "return_request",
+        "skill": "refund_handling",
+        "state": "waiting_user_confirm",
+        "reply": "该订单可以申请退货，金额 169.0 元。请在下方确认是否提交。",
+        "tools": [
+          "get_order_detail",
+          "check_refund_policy"
+        ],
+        "successful_tools": [
+          "get_order_detail",
+          "check_refund_policy"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 4,
+      "model_errors": 0,
+      "model_latency_ms": 8174.78,
+      "turn_latency_ms": 8192.41,
+      "total_tokens": 2604,
+      "estimated_cost": 0.00139
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-oos-implicit",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "normal",
+      "tags": [
+        "out_of_scope",
+        "real_model"
+      ],
+      "message": "顺便帮我安排一份周末上海三日游路线",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "out_of_scope"
+        ],
+        "skill": "general",
+        "state": "resolved_by_agent",
+        "handoff": false,
+        "reply_none": [
+          "外滩第一天",
+          "旅行路线如下"
+        ]
+      },
+      "actual": {
+        "intent": "out_of_scope",
+        "skill": "general",
+        "state": "resolved_by_agent",
+        "reply": "抱歉，这超出了我的售后服务范围。我可以帮您处理订单查询、退款退货、物流问题等售后事务，请问有什么可以帮您？",
+        "tools": [],
+        "successful_tools": [],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 1,
+      "model_errors": 0,
+      "model_latency_ms": 688.48,
+      "turn_latency_ms": 697.77,
+      "total_tokens": 0,
+      "estimated_cost": 0.0
+    },
+    {
+      "repetition": 1,
+      "case_id": "semantic-invoice-indirect",
+      "turn": 1,
+      "category": "semantic_understanding",
+      "severity": "normal",
+      "tags": [
+        "invoice",
+        "real_model"
+      ],
+      "message": "公司报销需要抬头和税号，这单能补一张凭证吗",
+      "passed": true,
+      "failures": [],
+      "expected": {
+        "intents": [
+          "invoice_request"
+        ],
+        "skill": "general",
+        "state": "resolved_by_agent",
+        "handoff": false
+      },
+      "actual": {
+        "intent": "invoice_request",
+        "skill": "general",
+        "state": "resolved_by_agent",
+        "reply": "根据当前政策，订单 11 已支持开具电子发票，您可自行在订单详情页点击“申请开票”获取。如需报销抬头和税号，请确保开票时已正确填写；若已开具但信息有误，可联系客服申请作废重开（需在开票后30天内操作）。",
+        "tools": [
+          "search_policy_docs"
+        ],
+        "successful_tools": [
+          "search_policy_docs"
+        ],
+        "failed_tools": [],
+        "refund_count": 0,
+        "deduplicated": false
+      },
+      "model_calls": 2,
+      "model_errors": 0,
+      "model_latency_ms": 2351.19,
+      "turn_latency_ms": 2362.47,
+      "total_tokens": 613,
+      "estimated_cost": 0.000324
+    }
+  ],
+  "honest_boundaries": [
+    "This evaluator uses an isolated in-memory database and bypasses HTTP/Celery.",
+    "Real model quality varies by provider version and sampling behavior.",
+    "Deterministic business decisions can pass even when optional model tool calls fail; tool assertions are reported separately."
+  ]
+}

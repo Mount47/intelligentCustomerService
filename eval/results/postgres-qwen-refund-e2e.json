@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-08-02T17:24:53.945276+00:00",
+  "stack": "HTTP + PostgreSQL + Redis + Celery + Qwen API",
+  "orderId": 75,
+  "first": {
+    "accept": {
+      "sessionId": 12,
+      "ticketId": 13,
+      "taskStatus": "queued",
+      "dedup": false
+    },
+    "observedTaskStatuses": [
+      "queued",
+      "processing",
+      "waiting_user_input"
+    ],
+    "intent": "return_request",
+    "skill": "refund_handling",
+    "state": "waiting_user_confirm",
+    "tools": [
+      {
+        "name": "get_order_detail",
+        "success": true
+      },
+      {
+        "name": "check_refund_policy",
+        "success": true
+      },
+      {
+        "name": "search_policy_docs",
+        "success": true
+      }
+    ],
+    "tokenUsage": {
+      "modelName": "qwen-plus",
+      "promptTokens": 2993,
+      "completionTokens": 344,
+      "totalTokens": 3337,
+      "estimatedCost": 0.00161,
+      "cacheHit": false
+    },
+    "pendingAction": {
+      "id": "b3008964d37f4c7f813f4cd497a575ca",
+      "type": "return_request",
+      "orderId": 75,
+      "amount": 168.0,
+      "createdAt": "2026-08-02T17:24:51.991343"
+    },
+    "reply": "该订单可以申请退货，金额 168.0 元。请在下方确认是否提交。"
+  },
+  "confirm": {
+    "accept": {
+      "sessionId": 13,
+      "ticketId": 13,
+      "taskStatus": "queued",
+      "dedup": false
+    },
+    "observedTaskStatuses": [
+      "processing",
+      "final"
+    ],
+    "intent": "refund_confirmation",
+    "skill": "refund_handling",
+    "state": "resolved_by_agent",
+    "tools": [],
+    "tokenUsage": {
+      "modelName": "qwen-plus",
+      "promptTokens": 151,
+      "completionTokens": 61,
+      "totalTokens": 212,
+      "estimatedCost": 0.000134,
+      "cacheHit": false
+    },
+    "reply": "已为您创建退货申请（金额 168.0 元，单号 #3），我们将尽快处理。"
+  },
+  "databaseEvidence": {
+    "engine": "PostgreSQL 16",
+    "refundRequests": [
+      {
+        "id": 3,
+        "orderId": 75,
+        "userId": 14,
+        "status": "draft",
+        "amount": 168.0,
+        "riskLevel": "low",
+        "requireHumanApproval": false
+      }
+    ],
+    "ticket": {
+      "id": 13,
+      "status": "resolved_by_agent",
+      "version": 2,
+      "pendingActionCleared": true,
+      "pendingContextCleared": true
+    },
+    "sessions": [
+      {
+        "id": 12,
+        "taskStatus": "waiting_user_input",
+        "intent": "return_request",
+        "skill": "refund_handling",
+        "finalStatus": "waiting_user_confirm",
+        "model": "qwen-plus",
+        "totalTokens": 3337,
+        "estimatedCost": 0.00161
+      },
+      {
+        "id": 13,
+        "taskStatus": "completed",
+        "intent": "refund_confirmation",
+        "skill": "refund_handling",
+        "finalStatus": "resolved_by_agent",
+        "model": "qwen-plus",
+        "totalTokens": 212,
+        "estimatedCost": 0.000134
+      }
+    ],
+    "toolCalls": [
+      {
+        "name": "get_order_detail",
+        "success": true,
+        "latencyMs": 5
+      },
+      {
+        "name": "check_refund_policy",
+        "success": true,
+        "latencyMs": 7
+      },
+      {
+        "name": "search_policy_docs",
+        "success": true,
+        "latencyMs": 3
+      }
+    ],
+    "stateTransitions": [
+      {
+        "from": null,
+        "to": "created",
+        "actor": "system",
+        "sessionId": null
+      },
+      {
+        "from": "created",
+        "to": "waiting_user_confirm",
+        "actor": "agent",
+        "sessionId": 12
+      },
+      {
+        "from": "waiting_user_confirm",
+        "to": "resolved_by_agent",
+        "actor": "agent",
+        "sessionId": 13
+      }
+    ],
+    "messageCount": 4
+  },
+  "queueEvidence": {
+    "broker": "Redis",
+    "queueDepthAfter": 0
+  }
+}
