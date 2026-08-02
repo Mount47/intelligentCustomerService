@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
+
+from pydantic import Field
 
 from app.schemas.common import CamelModel
 
@@ -14,6 +16,13 @@ class ChatMessageIn(CamelModel):
     client_message_id: Optional[str] = None
     ticket_id: Optional[int] = None
     order_id: Optional[int] = None
+
+
+class ChatActionIn(CamelModel):
+    ticket_id: int
+    action_id: str
+    decision: Literal["confirm", "cancel"]
+    client_action_id: str = Field(min_length=8, max_length=128)
 
 
 class SendMessageResponse(CamelModel):
@@ -61,6 +70,14 @@ class TokenUsage(CamelModel):
     cache_hit: bool = False
 
 
+class PendingActionView(CamelModel):
+    id: str
+    type: str
+    order_id: int
+    amount: float
+    created_at: Optional[datetime] = None
+
+
 class ChatSession(CamelModel):
     id: int
     ticket_id: Optional[int] = None
@@ -74,4 +91,5 @@ class ChatSession(CamelModel):
     steps: List[AgentTimelineStep] = []
     tool_calls: List[ToolCallView] = []
     token_usage: TokenUsage = TokenUsage()
+    pending_action: Optional[PendingActionView] = None
     total_latency_ms: Optional[int] = None

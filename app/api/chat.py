@@ -11,7 +11,7 @@ from app.core.ratelimit import allow_request
 from app.core.security import Principal, get_current_principal
 from app.db.models import AgentSession
 from app.db.session import get_db
-from app.schemas.chat import ChatMessageIn, ChatSession, SendMessageResponse
+from app.schemas.chat import ChatActionIn, ChatMessageIn, ChatSession, SendMessageResponse
 from app.services import chat_service
 from app.observability.tracing import get_trace_id
 
@@ -47,6 +47,13 @@ def _dispatch(session_id: int, trace_id: str) -> None:
         process_agent_message.delay(session_id, trace_id=trace_id)
 
 
+def _check_rate_limit(user_id: int) -> None:
+    limit = get_settings().chat_rate_limit_per_min
+    allowed, _ = allow_request(f"chat:{user_id}", limit, window_sec=60)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+
+
 @router.post("/message", response_model=SendMessageResponse)
 def post_message(
     payload: ChatMessageIn,
@@ -58,16 +65,32 @@ def post_message(
         raise ResourceAccessDenied("request user_id does not match authenticated identity")
     payload = payload.model_copy(update={"user_id": principal.user_id})
     # 接入层前置限流：超额在入队前挡掉，保护队列与下游 LLM 成本（fail-open）
-    limit = get_settings().chat_rate_limit_per_min
-    allowed, _ = allow_request(f"chat:{principal.user_id}", limit, window_sec=60)
-    if not allowed:
-        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+    _check_rate_limit(principal.user_id)
     sess, dedup = chat_service.accept_message(db, payload)
     if not dedup:
         _dispatch(sess.id, get_trace_id())
     return SendMessageResponse(
         session_id=sess.id, ticket_id=sess.ticket_id,
         task_status=sess.task_status, dedup=dedup)
+
+
+@router.post("/action", response_model=SendMessageResponse)
+def post_action(
+    payload: ChatActionIn,
+    principal: Principal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> SendMessageResponse:
+    """提交页面上的确认或取消按钮；业务含义由服务端待确认记录决定。"""
+    _check_rate_limit(principal.user_id)
+    sess, dedup = chat_service.accept_action(db, payload, principal.user_id)
+    if not dedup:
+        _dispatch(sess.id, get_trace_id())
+    return SendMessageResponse(
+        session_id=sess.id,
+        ticket_id=sess.ticket_id,
+        task_status=sess.task_status,
+        dedup=dedup,
+    )
 
 
 @router.get("/session/{session_id}", response_model=ChatSession)

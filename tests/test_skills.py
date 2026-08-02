@@ -64,6 +64,24 @@ def test_refund_low_risk_two_step_confirm(db, user_order):
     assert "退款" in d2.reply
 
 
+def test_return_keeps_return_wording_through_confirmation(db, user_order):
+    u, o = user_order
+    o.status = "delivered"
+    o.delivered_at = datetime.utcnow() - timedelta(days=2)
+    db.flush()
+    send, t = _convo(db, u.id, order_id=o.id)
+
+    first, c1 = send("我想申请退货")
+    assert c1.state == States.WAITING_USER_CONFIRM
+    assert t.pending_action["type"] == "return_request"
+    assert "退货" in first.reply and "退款" not in first.reply
+
+    second, c2 = send("确认提交退货申请")
+    assert c2.state == States.RESOLVED_BY_AGENT
+    assert "退货申请" in second.reply
+    assert db.query(RefundRequest).count() == 1
+
+
 def test_refund_high_amount_to_human(db, user_order):
     u, _ = user_order
     big = make_order(db, u.id, amount=999)
@@ -261,6 +279,7 @@ def test_logistics_stale_creates_urge_ticket(db, user_order):
     assert ctx.state == States.RESOLVED_BY_AGENT
     assert db.query(Ticket).filter_by(category="logistics").count() == 1
     assert "催件" in decision.reply
+    assert "上海转运中心" in decision.reply and "最后更新于" in decision.reply
 
 
 def test_logistics_urge_ticket_dedup(db, user_order):
@@ -272,6 +291,7 @@ def test_logistics_urge_ticket_dedup(db, user_order):
     d2, _ = _run(db, u.id, "我的快递到哪了", order_id=o.id)   # 再问一次
     assert db.query(Ticket).filter_by(category="logistics", order_id=o.id).count() == 1
     assert "处理中" in d2.reply
+    assert "上海转运中心" in d2.reply and "最后更新于" in d2.reply
 
 
 def test_logistics_delivered_not_received_to_human(db, user_order):

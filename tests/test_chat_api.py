@@ -4,18 +4,20 @@ API 测试用 TestClient + 依赖覆盖 sqlite + monkeypatch 入队（不连真�
 worker 处理用 stub agent 同步跑 run_agent_session。
 """
 import pytest
+from datetime import datetime
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
+from app.agent.state_machine import States
 from app.core.exceptions import ResourceAccessDenied
 from app.core.security import issue_access_token
-from app.db.models import Base, RefundRequest, Ticket, TicketMessage, User
+from app.db.models import Base, Order, RefundRequest, Ticket, TicketMessage, User
 from app.db.session import get_db
 from app.main import app
-from app.schemas.chat import ChatMessageIn
+from app.schemas.chat import ChatActionIn, ChatMessageIn
 from app.services import chat_service
 from app.workers.runner import run_agent_session
 
@@ -48,6 +50,7 @@ def client(monkeypatch):
     c = TestClient(app, raise_server_exceptions=False)
     c.headers["Authorization"] = f"Bearer {token}"
     c.dispatched = dispatched
+    c.session_factory = TestSession
     try:
         yield c
     finally:
@@ -95,10 +98,21 @@ def test_run_agent_session_two_step_confirm(db, user_order):
     assert s1.current_intent == "refund_request"
     assert s1.final_status == "waiting_user_confirm"
     assert db.query(RefundRequest).count() == 0          # 还未建草稿
+    pending = chat_service.get_session_view(db, s1.id).pending_action
+    assert pending and pending.type == "refund_request"
+    assert pending.order_id == o.id and pending.amount == 100
 
     # 第2轮：同一工单确认 → 建草稿、完成
-    s2, _ = chat_service.accept_message(
-        db, ChatMessageIn(user_id=u.id, content="确认，帮我退吧", ticket_id=s1.ticket_id))
+    s2, _ = chat_service.accept_action(
+        db,
+        ChatActionIn(
+            ticket_id=s1.ticket_id,
+            action_id=pending.id,
+            decision="confirm",
+            client_action_id="test-structured-confirm",
+        ),
+        u.id,
+    )
     run_agent_session(db, s2.id, agent=build_default_agent())
     db.refresh(s2)
     assert s2.task_status == "completed"
@@ -111,6 +125,96 @@ def test_run_agent_session_two_step_confirm(db, user_order):
     view = chat_service.get_session_view(db, s2.id)
     kinds = [s.kind for s in view.steps]
     assert "intent" in kinds and "skill" in kinds and "state" in kinds
+
+
+def test_structured_chat_action_validates_and_is_idempotent(client):
+    with client.session_factory() as db:
+        order = Order(
+            user_id=1, order_no="ACTION-ORDER", status="paid",
+            total_amount=100, product_type="normal",
+        )
+        db.add(order)
+        db.flush()
+        ticket = Ticket(
+            user_id=1,
+            order_id=order.id,
+            category="chat",
+            status=States.WAITING_USER_CONFIRM,
+            pending_action={
+                "id": "pending-action-1",
+                "type": "refund_request",
+                "order_id": order.id,
+                "amount": 100,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+        )
+        db.add(ticket)
+        db.commit()
+        ticket_id = ticket.id
+
+    invalid = client.post("/api/chat/action", json={
+        "ticketId": ticket_id,
+        "actionId": "stale-action",
+        "decision": "confirm",
+        "clientActionId": "client-action-invalid",
+    })
+    assert invalid.status_code == 409
+    assert invalid.json()["error"]["code"] == "pending_action_invalid"
+
+    payload = {
+        "ticketId": ticket_id,
+        "actionId": "pending-action-1",
+        "decision": "confirm",
+        "clientActionId": "client-action-confirm-1",
+    }
+    first = client.post("/api/chat/action", json=payload)
+    second = client.post("/api/chat/action", json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200 and second.json()["dedup"] is True
+    assert client.dispatched == [(first.json()["sessionId"], first.headers["X-Trace-ID"])]
+
+    with client.session_factory() as db:
+        messages = db.query(TicketMessage).filter_by(ticket_id=ticket_id).all()
+        ticket = db.get(Ticket, ticket_id)
+        assert [message.content for message in messages] == ["确认提交退款申请"]
+        assert ticket.pending_action["submitted_action"] == "confirm"
+
+
+def test_structured_chat_action_cannot_operate_other_users_ticket(client):
+    with client.session_factory() as db:
+        other = User(username="action-other")
+        db.add(other)
+        db.flush()
+        order = Order(
+            user_id=other.id, order_no="OTHER-ACTION", status="paid",
+            total_amount=80, product_type="normal",
+        )
+        db.add(order)
+        db.flush()
+        ticket = Ticket(
+            user_id=other.id,
+            order_id=order.id,
+            category="chat",
+            status=States.WAITING_USER_CONFIRM,
+            pending_action={
+                "id": "other-action",
+                "type": "refund_request",
+                "order_id": order.id,
+                "amount": 80,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+        )
+        db.add(ticket)
+        db.commit()
+        ticket_id = ticket.id
+
+    response = client.post("/api/chat/action", json={
+        "ticketId": ticket_id,
+        "actionId": "other-action",
+        "decision": "cancel",
+        "clientActionId": "client-action-other-1",
+    })
+    assert response.status_code == 403
 
 
 def test_run_agent_session_high_risk_need_human(db, user_order):

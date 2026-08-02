@@ -37,6 +37,7 @@ def detect_exception(
         "carrier": logi.carrier,
         "tracking_no": logi.tracking_no,
         "last_location": logi.last_location,
+        "last_update_time": logi.last_update_time,
         "is_exception": is_exc,
         "exception_reason": reason,
         "stale": stale,

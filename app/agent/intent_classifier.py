@@ -168,6 +168,12 @@ class RuleIntentClassifier:
         if Intents.REFUND_REQUEST in candidates and Intents.RETURN_REQUEST in candidates \
                 and not _has(text, _RETURN_EXACT):
             candidates.remove(Intents.RETURN_REQUEST)
+        # “申请退货”会同时命中广义词“申请退”和精确词“退货”；没有明确“退款/退钱/退费”
+        # 时应保留更具体的退货意图，避免错误进入多意图澄清。
+        if Intents.REFUND_REQUEST in candidates and Intents.RETURN_REQUEST in candidates \
+                and _has(text, _RETURN_EXACT) \
+                and not _has(text, ("退款", "退钱", "退费")):
+            candidates.remove(Intents.REFUND_REQUEST)
         # “退我的订单”中的“订单”是操作对象，不是独立订单查询。
         if any(i in candidates for i in _REFUND_FAMILY) and Intents.ORDER_QUERY in candidates:
             candidates.remove(Intents.ORDER_QUERY)

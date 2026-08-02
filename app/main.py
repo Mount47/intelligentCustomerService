@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api import admin, auth, chat, health
+from app.api import admin, auth, chat, health, orders
 from app.core.config import get_settings
 from app.core.exceptions import SupportFlowError
 from app.core.logging import get_logger, setup_logging
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     # 路由（health + chat 异步闭环 + admin 运维监测）
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(orders.router)
     app.include_router(chat.router)
     app.include_router(admin.router)
     app.include_router(prometheus_router)

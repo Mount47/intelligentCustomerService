@@ -37,6 +37,13 @@ class IdempotencyKeyConflict(SupportFlowError):
     http_status = 409
 
 
+class InvalidPendingAction(SupportFlowError):
+    """确认按钮引用的待处理操作不存在、已过期或已经提交。"""
+
+    code = "pending_action_invalid"
+    http_status = 409
+
+
 class ToolExecutionError(SupportFlowError):
     """工具执行失败（主流程不应崩，工具内捕获后返回结构化错误）。"""
 

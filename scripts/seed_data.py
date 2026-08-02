@@ -1,6 +1,7 @@
-"""种子数据（§18）：10 用户 / 50 订单（各状态+各商品类型）/ 物流（各状态）/ 政策文档。
+"""种子数据：随机基础数据、可复现场景数据、完整演示用户和政策文档。
 
-幂等：已存在用户则跳过（避免重复 seed）。固定随机种子保证可复现。
+幂等：基础数据只在空库生成；完整演示用户采用增量补齐，可反复执行且不清除现有数据。
+固定随机种子保证可复现。
 用法：python -m scripts.seed_data
 """
 from __future__ import annotations
@@ -95,6 +96,109 @@ INTENT_ONLY = [
     ("想了解你们的售后规则", "政策问答→兜底"),
 ]
 
+# 第二个演示用户的数据更贴近日常操作：订单名称、金额、时间、商品明细和物流节点都固定，
+# 登录网页后可以直接逐单验证，不必记技术边界编号。
+SHOWCASE_USERNAME = "demo_vip"
+SHOWCASE_PASSWORD = "supportflow-user"
+SHOWCASE_ORDERS = [
+    {
+        "order_no": "VIP-WAIT-PAY", "status": "pending_payment", "amount": 269,
+        "items": [("机械键盘", 1, 269)], "message": "这笔订单是什么状态？",
+        "expected": "订单·待付款，无物流",
+    },
+    {
+        "order_no": "VIP-WAIT-SHIP", "status": "paid", "amount": 199,
+        "paid_hours_ago": 12, "items": [("蓝牙耳机", 1, 199)],
+        "message": "什么时候发货？", "expected": "订单·已付款待发货",
+    },
+    {
+        "order_no": "VIP-LOGI-PICKUP", "status": "shipped", "amount": 119,
+        "paid_hours_ago": 30, "shipped_hours_ago": 6,
+        "items": [("保温杯", 2, 59.5)],
+        "logistics": {"status": "pending", "hours_ago": 4, "location": "杭州电商仓"},
+        "message": "快递揽收了吗？", "expected": "物流·等待揽收",
+    },
+    {
+        "order_no": "VIP-LOGI-NORMAL", "status": "shipped", "amount": 239,
+        "paid_hours_ago": 50, "shipped_hours_ago": 28,
+        "items": [("双肩包", 1, 239)],
+        "logistics": {"status": "in_transit", "hours_ago": 3, "location": "苏州分拨中心"},
+        "message": "我的快递到哪里了？", "expected": "物流·正常运输，播报最近位置",
+    },
+    {
+        "order_no": "VIP-LOGI-DELIVERY", "status": "shipped", "amount": 329,
+        "paid_hours_ago": 72, "shipped_hours_ago": 48,
+        "items": [("运动鞋", 1, 329)],
+        "logistics": {
+            "status": "in_transit", "hours_ago": 1, "location": "上海市浦东新区派送网点"
+        },
+        "message": "今天能收到吗？", "expected": "物流·正在派送，只播报已有事实",
+    },
+    {
+        "order_no": "VIP-LOGI-STALE", "status": "shipped", "amount": 458,
+        "paid_hours_ago": 120, "shipped_hours_ago": 96,
+        "items": [("机械键盘", 1, 329), ("无线鼠标", 1, 129)],
+        "logistics": {"status": "in_transit", "hours_ago": 72, "location": "武汉转运中心"},
+        "message": "为什么物流一直不动？",
+        "expected": "物流·超过48小时，位置与时间照常播报并创建催件工单",
+    },
+    {
+        "order_no": "VIP-LOGI-EXCEPTION", "status": "shipped", "amount": 369,
+        "paid_hours_ago": 72, "shipped_hours_ago": 50,
+        "items": [("运动鞋", 1, 369)],
+        "logistics": {
+            "status": "exception", "hours_ago": 6, "location": "郑州中转场",
+            "is_exception": True, "reason": "受强降雨影响，运输暂时延迟",
+        },
+        "message": "快递是不是出问题了？", "expected": "物流·明确异常并创建催件工单",
+    },
+    {
+        "order_no": "VIP-DELIVERED-NOTRECV", "status": "delivered", "amount": 299,
+        "paid_hours_ago": 96, "shipped_hours_ago": 72, "delivered_days_ago": 0,
+        "items": [("蓝牙耳机", 1, 299)],
+        "logistics": {"status": "delivered", "hours_ago": 5, "location": "小区前台"},
+        "message": "物流显示签收了但我没收到", "expected": "物流·签收未收到，转人工核实",
+    },
+    {
+        "order_no": "VIP-REFUND-RECENT", "status": "delivered", "amount": 168,
+        "paid_hours_ago": 120, "shipped_hours_ago": 96, "delivered_days_ago": 2,
+        "items": [("双肩包", 1, 168)],
+        "logistics": {"status": "delivered", "hours_ago": 48, "location": "本人签收"},
+        "message": "我想申请退款", "expected": "退款·普通商品7天内，等待二次确认",
+    },
+    {
+        "order_no": "VIP-REFUND-OVERDUE", "status": "delivered", "amount": 399,
+        "paid_hours_ago": 360, "shipped_hours_ago": 336, "delivered_days_ago": 10,
+        "items": [("运动鞋", 1, 399)],
+        "logistics": {"status": "delivered", "hours_ago": 240, "location": "本人签收"},
+        "message": "我想申请退款", "expected": "退款·签收超过7天，转人工审核",
+    },
+    {
+        "order_no": "VIP-REFUND-HIGH", "status": "paid", "amount": 899,
+        "paid_hours_ago": 8, "items": [("机械键盘", 1, 899)],
+        "message": "我要退款", "expected": "退款·金额超过500元，转人工审核",
+    },
+    {
+        "order_no": "VIP-REFUND-FRESH", "status": "delivered", "amount": 128,
+        "product": "fresh_food", "paid_hours_ago": 72, "shipped_hours_ago": 50,
+        "delivered_days_ago": 1, "items": [("阳光玫瑰葡萄", 2, 64)],
+        "logistics": {"status": "delivered", "hours_ago": 24, "location": "本人签收"},
+        "message": "葡萄不想要了，申请退款", "expected": "退款·生鲜商品，转人工审核",
+    },
+    {
+        "order_no": "VIP-REFUND-CUSTOM", "status": "delivered", "amount": 258,
+        "product": "customized_product", "paid_hours_ago": 120, "shipped_hours_ago": 96,
+        "delivered_days_ago": 3, "items": [("定制相册", 1, 258)],
+        "logistics": {"status": "delivered", "hours_ago": 72, "location": "本人签收"},
+        "message": "定制相册可以退吗？", "expected": "退款咨询·定制商品政策",
+    },
+    {
+        "order_no": "VIP-CANCELLED", "status": "cancelled", "amount": 99,
+        "items": [("保温杯", 1, 99)], "message": "取消的订单还能退款吗？",
+        "expected": "订单·已取消，不重复退款",
+    },
+]
+
 
 def _seed_scenarios(db, now: datetime) -> tuple[int, list[tuple]]:
     """造场景订单，返回 (demo 用户 id, [(order_id, order_no, 消息, 预期)])。"""
@@ -133,10 +237,87 @@ def _seed_scenarios(db, now: datetime) -> tuple[int, list[tuple]]:
     return demo.id, rows
 
 
-def _print_table(demo_id: int, rows: list[tuple]) -> None:
-    print(f"\n===== 场景演示对照表 (demo 用户 id={demo_id}；非本人场景订单属于 demo_other) =====")
-    print("说明：order-based 场景用 API/demo_local 测（请求带 orderId）；")
-    print("      前端聊天暂不传 orderId，退款/物流会走『请补充订单号』。\n")
+def _seed_showcase_user(db, now: datetime) -> tuple[int, list[tuple], int]:
+    """增量补齐第二个演示用户；返回用户编号、对照行和本次新增订单数。"""
+    user = db.query(User).filter(User.username == SHOWCASE_USERNAME).first()
+    if user is None:
+        user = User(
+            username=SHOWCASE_USERNAME,
+            phone="13900000002",
+            email="demo_vip@example.com",
+            user_level="vip",
+            password_hash=hash_password(SHOWCASE_PASSWORD),
+        )
+        db.add(user)
+        db.flush()
+
+    rows: list[tuple] = []
+    created_orders = 0
+    for index, spec in enumerate(SHOWCASE_ORDERS, start=1):
+        order = db.query(Order).filter(Order.order_no == spec["order_no"]).first()
+        if order is None:
+            status = spec["status"]
+            paid_at = (
+                now - timedelta(hours=spec["paid_hours_ago"])
+                if spec.get("paid_hours_ago") is not None else None
+            )
+            shipped_at = (
+                now - timedelta(hours=spec["shipped_hours_ago"])
+                if spec.get("shipped_hours_ago") is not None else None
+            )
+            delivered_at = (
+                now - timedelta(days=spec["delivered_days_ago"])
+                if spec.get("delivered_days_ago") is not None else None
+            )
+            order = Order(
+                user_id=user.id,
+                order_no=spec["order_no"],
+                status=status,
+                total_amount=spec["amount"],
+                product_type=spec.get("product", "normal"),
+                paid_at=paid_at,
+                shipped_at=shipped_at,
+                delivered_at=delivered_at,
+            )
+            db.add(order)
+            db.flush()
+            for product_name, quantity, unit_price in spec["items"]:
+                db.add(OrderItem(
+                    order_id=order.id,
+                    product_name=product_name,
+                    quantity=quantity,
+                    unit_price=unit_price,
+                ))
+            logistics = spec.get("logistics")
+            if logistics:
+                db.add(Logistics(
+                    order_id=order.id,
+                    carrier="顺丰",
+                    tracking_no=f"VIP{now:%Y%m%d}{index:04d}",
+                    status=logistics["status"],
+                    last_location=logistics["location"],
+                    last_update_time=now - timedelta(hours=logistics["hours_ago"]),
+                    is_exception=logistics.get("is_exception", False),
+                    exception_reason=logistics.get("reason"),
+                ))
+            created_orders += 1
+        elif order.user_id != user.id:
+            logger.warning("showcase order_no belongs to another user: %s", spec["order_no"])
+            continue
+        rows.append((order.id, spec["order_no"], spec["message"], spec["expected"]))
+    return user.id, rows, created_orders
+
+
+def _print_table(
+    user_id: int,
+    rows: list[tuple],
+    *,
+    username: str = "demo",
+    note: str = "非本人场景订单属于 demo_other",
+) -> None:
+    print(f"\n===== 场景演示对照表 ({username} 用户 id={user_id}；{note}) =====")
+    print("说明：网页端登录后从本人订单中选择，页面会自动关联订单；")
+    print("      也可用 API/demo_local 测试（请求带 orderId）。\n")
     print(f"{'order_id':>8}  {'order_no':<22}  {'建议消息':<16}  预期场景")
     print("-" * 88)
     for oid, order_no, message, expected in rows:
@@ -144,7 +325,7 @@ def _print_table(demo_id: int, rows: list[tuple]) -> None:
     print("\n  纯意图场景（无需 orderId，userId 用任意已存在用户）：")
     for message, expected in INTENT_ONLY:
         print(f"{'—':>8}  {'—':<22}  {message:<16}  {expected}")
-    print(f"\n示例：POST /api/chat/message  {{\"userId\": {demo_id}, "
+    print(f"\n示例：POST /api/chat/message  {{\"userId\": {user_id}, "
           f"\"content\": \"我要退款\", \"orderId\": <上表 order_id>}}\n")
 
 
@@ -153,7 +334,20 @@ def seed() -> None:
     rng = random.Random(42)
     with SessionLocal() as db:
         if db.query(User).count() > 0:
-            logger.info("seed skipped: users already exist")
+            now = datetime.utcnow()
+            showcase_id, showcase_rows, created = _seed_showcase_user(db, now)
+            db.commit()
+            logger.info(
+                "existing database kept; showcase user ensured: %s, %d new orders",
+                SHOWCASE_USERNAME,
+                created,
+            )
+            _print_table(
+                showcase_id,
+                showcase_rows,
+                username=SHOWCASE_USERNAME,
+                note=f"密码 {SHOWCASE_PASSWORD}，本次新增 {created} 笔订单",
+            )
             return
 
         users = [
@@ -207,15 +401,28 @@ def seed() -> None:
                 ))
 
         demo_id, rows = _seed_scenarios(db, now)
+        showcase_id, showcase_rows, _ = _seed_showcase_user(db, now)
         db.add(User(
             username="admin", email="admin@example.com", role="admin",
             password_hash=hash_password("supportflow-admin")))
 
         db.add_all(KnowledgeDoc(title=t, category=c, content=body) for t, c, body in POLICIES)
         db.commit()
-        logger.info("seeded: %d users(含 demo/demo_other/admin), %d 随机单 + %d 场景单, %d policies",
-                    len(users) + 3, len(orders), len(SCENARIOS), len(POLICIES))
+        logger.info(
+            "seeded: %d users, %d random orders + %d boundary orders + %d showcase orders, %d policies",
+            len(users) + 4,
+            len(orders),
+            len(SCENARIOS),
+            len(SHOWCASE_ORDERS),
+            len(POLICIES),
+        )
         _print_table(demo_id, rows)
+        _print_table(
+            showcase_id,
+            showcase_rows,
+            username=SHOWCASE_USERNAME,
+            note=f"密码 {SHOWCASE_PASSWORD}，完整业务演示数据",
+        )
 
 
 if __name__ == "__main__":

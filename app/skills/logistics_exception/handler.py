@@ -13,6 +13,24 @@ _SYSTEM = (
 )
 _READ_TOOLS = ["get_logistics_status", "check_logistics_exception"]
 _NOT_RECEIVED = ("没收到", "未收到", "没收", "未签收", "没到货")
+_STATUS_CN = {
+    "pending": "待揽收",
+    "in_transit": "运输中",
+    "delivered": "已签收",
+    "exception": "物流异常",
+}
+
+
+def _logistics_snapshot(exc: dict) -> str:
+    """异常和正常分支都先说明可核实的最近物流事实。"""
+    status = _STATUS_CN.get(exc.get("status"), exc.get("status") or "更新中")
+    location = exc.get("last_location") or "暂未更新"
+    updated_at = exc.get("last_update_time")
+    updated_text = updated_at.strftime("%Y-%m-%d %H:%M") if updated_at else "暂无更新时间"
+    return (
+        f"包裹状态为{status}，最近一次物流位置是{location}，"
+        f"最后更新于{updated_text}。"
+    )
 
 
 class LogisticsExceptionSkill:
@@ -58,16 +76,16 @@ class LogisticsExceptionSkill:
             existing = ticket_service.get_open_ticket(db, ctx.user_id, ctx.order_id, "logistics")
             if existing is not None:
                 return Decision(
-                    f"该订单的催件工单（#{existing.id}）已在处理中，物流专员会尽快跟进，无需重复提交。",
+                    f"{_logistics_snapshot(exc)}该订单的催件工单（#{existing.id}）已在处理中，"
+                    "物流专员会尽快跟进，无需重复提交。",
                     States.RESOLVED_BY_AGENT)
             t = ticket_service.create_ticket(
                 db, ctx.user_id, "logistics", priority="high", order_id=ctx.order_id)
             reason = exc.get("exception_reason") or "长时间无更新"
             return Decision(
-                f"检测到物流异常（{reason}），已为您创建催件工单（#{t.id}），物流专员将尽快跟进。",
+                f"{_logistics_snapshot(exc)}检测到物流异常（{reason}），"
+                f"已为您创建催件工单（#{t.id}），物流专员将尽快跟进。",
                 States.RESOLVED_BY_AGENT)
 
         # 正常
-        return Decision(
-            f"您的包裹当前状态：{exc.get('status')}，最新位置：{exc.get('last_location') or '更新中'}。",
-            States.RESOLVED_BY_AGENT)
+        return Decision(_logistics_snapshot(exc), States.RESOLVED_BY_AGENT)

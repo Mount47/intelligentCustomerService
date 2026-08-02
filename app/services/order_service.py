@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Order, OrderItem
 
@@ -13,7 +13,11 @@ def get_order(db: Session, order_id: int) -> Order | None:
 
 def get_user_orders(db: Session, user_id: int) -> list[Order]:
     return list(db.scalars(
-        select(Order).where(Order.user_id == user_id).order_by(Order.id.desc())).all())
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.user_id == user_id)
+        .order_by(Order.id.desc())
+    ).all())
 
 
 def get_order_items(db: Session, order_id: int) -> list[OrderItem]:

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import uuid4
 
 from app.agent.context import AgentContext, Decision, SkillPlan
 from app.agent.intent_classifier import Intents
@@ -94,17 +95,29 @@ class RefundHandlingSkill:
             return Decision(f"您的退款涉及人工审核（{reasons}），已提交审核工单（#{t.id}），专员将尽快跟进。",
                             States.NEED_HUMAN, need_handoff=True, handoff_reason="refund_high_risk")
         # 低风险：进入待确认，绑定 pending_action，不直接建草稿
+        action_type = self._intent(ctx)
+        operation = "退货" if action_type == Intents.RETURN_REQUEST else "退款"
         if ticket is not None:
-            ticket.pending_action = {"type": Intents.REFUND_REQUEST.value, "order_id": ctx.order_id,
-                                     "amount": policy["amount"], "created_at": datetime.utcnow().isoformat()}
+            ticket.pending_action = {
+                "id": uuid4().hex,
+                "type": action_type.value,
+                "order_id": ctx.order_id,
+                "amount": policy["amount"],
+                "created_at": datetime.utcnow().isoformat(),
+            }
             db.flush()
-        return Decision(f"您确认要对该订单申请退款（金额 {policy['amount']} 元）吗？"
-                        f"回复『确认』继续，或『取消』放弃。", States.WAITING_USER_CONFIRM)
+        return Decision(
+            f"该订单可以申请{operation}，金额 {policy['amount']} 元。"
+            f"请在下方确认是否提交。",
+            States.WAITING_USER_CONFIRM,
+        )
 
     # ---- refund_confirmation：仅当绑定了 pending refund action 才真正建草稿 ----
     def _confirm(self, db, ctx: AgentContext, ticket) -> Decision:
         pa = ticket.pending_action if ticket else None
-        if not pa or pa.get("type") != Intents.REFUND_REQUEST.value:
+        if not pa or pa.get("type") not in {
+            Intents.REFUND_REQUEST.value, Intents.RETURN_REQUEST.value
+        }:
             # 跨业务误确认防护：没有待确认的退款动作
             return Decision("当前没有待确认的退款申请。如需退款请先告知订单号。", States.RESOLVED_BY_AGENT)
         try:
@@ -117,6 +130,7 @@ class RefundHandlingSkill:
             db.flush()
             return Decision("确认已超时，请重新发起退款申请。", States.RESOLVED_BY_AGENT)
         order_id = pa["order_id"]
+        operation = "退货" if pa["type"] == Intents.RETURN_REQUEST.value else "退款"
         existing = refund_service.get_active_refund(db, ctx.user_id, order_id)
         if existing is not None:                     # 幂等：已建则不重复
             ticket.pending_action = None
@@ -124,19 +138,28 @@ class RefundHandlingSkill:
             return Decision(f"您该订单的退款申请（单号 #{existing.id}）已在处理中。", States.RESOLVED_BY_AGENT)
         draft = refund_service.create_refund_draft(
             db, user_id=ctx.user_id, order_id=order_id,
-            refund_reason="用户确认退款", commit=False)
+            refund_reason=f"用户确认{operation}", commit=False)
         ticket.pending_action = None
         db.flush()
-        return Decision(f"已为您创建退款申请（金额 {draft['amount']} 元，单号 #{draft['refund_request_id']}），"
-                        f"我们将尽快处理。", States.RESOLVED_BY_AGENT)
+        return Decision(
+            f"已为您创建{operation}申请（金额 {draft['amount']} 元，"
+            f"单号 #{draft['refund_request_id']}），我们将尽快处理。",
+            States.RESOLVED_BY_AGENT,
+        )
 
     # ---- cancel_refund：撤待确认动作 或 撤已建草稿 ----
     def _cancel(self, db, ctx: AgentContext, ticket) -> Decision:
-        if ticket and ticket.pending_action and \
-                ticket.pending_action.get("type") == Intents.REFUND_REQUEST.value:
+        if ticket and ticket.pending_action and ticket.pending_action.get("type") in {
+            Intents.REFUND_REQUEST.value, Intents.RETURN_REQUEST.value
+        }:
+            operation = (
+                "退货"
+                if ticket.pending_action.get("type") == Intents.RETURN_REQUEST.value
+                else "退款"
+            )
             ticket.pending_action = None
             db.flush()
-            return Decision("已为您取消本次退款申请，未提交。", States.RESOLVED_BY_AGENT)
+            return Decision(f"已取消本次{operation}申请，未提交。", States.RESOLVED_BY_AGENT)
         if ctx.order_id is not None:
             cancelled = refund_service.cancel_active_refund(
                 db, ctx.user_id, ctx.order_id, commit=False)

@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 ORM 模型 —— 11 张表（§8）。
+"""SQLAlchemy 2.0 ORM 模型 —— 13 张表。
 
 约定：状态字段用 String + 常量（PG/SQLite 双兼容，便于测试，不上原生 enum）；
 金额用 Numeric(10,2)；时间默认 func.now()。退款双唯一约束 + 消息幂等键见对应表。

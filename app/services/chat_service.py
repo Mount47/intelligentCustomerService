@@ -6,20 +6,26 @@ build_chat_session：组装前端 ChatSession（messages + steps 时间线 + too
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
+from datetime import datetime
 
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
-from app.core.exceptions import ResourceAccessDenied, SupportFlowError
+from app.agent.state_machine import States
+from app.core.exceptions import InvalidPendingAction, ResourceAccessDenied, SupportFlowError
 from app.db.models import AgentSession, AgentToolCall, Order, Ticket, TicketMessage
 from app.schemas.chat import (
     AgentTimelineStep,
+    ChatActionIn,
     ChatMessageIn,
     ChatMessageView,
     ChatSession,
+    PendingActionView,
     ToolCallView,
     TokenUsage,
 )
@@ -76,6 +82,22 @@ def _duplicate_session(
     # 兼容迁移前的历史行；新写入始终走 source_message_id 精确关联。
     return db.scalar(select(AgentSession).where(
         AgentSession.ticket_id == dup.ticket_id).order_by(desc(AgentSession.id)))
+
+
+def _action_message_id(client_action_id: str) -> str:
+    digest = hashlib.sha256(client_action_id.encode("utf-8")).hexdigest()
+    return f"chat-action:{digest}"
+
+
+def _pending_action_id(ticket: Ticket, pending: dict) -> str:
+    """新数据直接使用随机编号；旧数据生成稳定编号，保证升级后已有会话仍可操作。"""
+    if pending.get("id"):
+        return str(pending["id"])
+    source = (
+        f"{ticket.id}:{pending.get('type')}:{pending.get('order_id')}:"
+        f"{pending.get('amount')}:{pending.get('created_at')}"
+    )
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:24]
 
 
 def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, bool]:
@@ -140,6 +162,65 @@ def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, b
     return sess, False
 
 
+def accept_action(
+    db: Session, payload: ChatActionIn, user_id: int
+) -> tuple[AgentSession, bool]:
+    """接收结构化确认操作，服务端生成规范消息并复用原异步处理链路。"""
+    message_id = _action_message_id(payload.client_action_id)
+    duplicate = _duplicate_session(db, user_id, message_id)
+    if duplicate is not None:
+        return duplicate, True
+
+    ticket = db.scalar(
+        select(Ticket).where(Ticket.id == payload.ticket_id).with_for_update())
+    duplicate = _duplicate_session(db, user_id, message_id)
+    if duplicate is not None:
+        return duplicate, True
+    if ticket is None:
+        raise InvalidPendingAction("待确认操作不存在，请重新发起申请")
+    if ticket.user_id != user_id:
+        raise ResourceAccessDenied("ticket does not belong to user")
+    pending = dict(ticket.pending_action or {})
+    if ticket.status != States.WAITING_USER_CONFIRM or not pending:
+        raise InvalidPendingAction("当前没有等待确认的操作")
+    if _pending_action_id(ticket, pending) != payload.action_id:
+        raise InvalidPendingAction("确认内容已经变化，请刷新后重新确认")
+    if pending.get("submitted_action"):
+        raise InvalidPendingAction("该操作已经提交，请勿重复操作")
+    if pending.get("type") not in ("refund_request", "return_request"):
+        raise InvalidPendingAction("当前操作暂不支持页面确认")
+    try:
+        created_at = datetime.fromisoformat(str(pending["created_at"]))
+        if (datetime.utcnow() - created_at).total_seconds() > 3600:
+            raise InvalidPendingAction("确认已超时，请重新发起申请")
+    except (KeyError, TypeError, ValueError):
+        raise InvalidPendingAction("待确认操作数据不完整，请重新发起申请")
+    order = db.get(Order, int(pending["order_id"]))
+    if order is None or order.user_id != user_id or ticket.order_id != order.id:
+        raise InvalidPendingAction("订单信息已经变化，请重新发起申请")
+    if float(order.total_amount) != float(pending["amount"]):
+        raise InvalidPendingAction("订单金额已经变化，请重新发起申请")
+
+    operation = "退货" if pending["type"] == "return_request" else "退款"
+    content = (
+        f"确认提交{operation}申请"
+        if payload.decision == "confirm"
+        else f"取消本次{operation}申请"
+    )
+    pending["submitted_action"] = payload.decision
+    pending["submitted_client_id"] = payload.client_action_id
+    ticket.pending_action = pending
+    flag_modified(ticket, "pending_action")
+
+    return accept_message(db, ChatMessageIn(
+        user_id=user_id,
+        content=content,
+        client_message_id=message_id,
+        ticket_id=ticket.id,
+        order_id=ticket.order_id,
+    ))
+
+
 def _build_steps(sess: AgentSession, tool_calls: list[AgentToolCall]) -> list[AgentTimelineStep]:
     steps: list[AgentTimelineStep] = []
     if sess.current_intent:
@@ -170,6 +251,25 @@ def build_chat_session(db: Session, sess: AgentSession) -> ChatSession:
     latency = None
     if sess.started_at and sess.finished_at:
         latency = int((sess.finished_at - sess.started_at).total_seconds() * 1000)
+    pending_view = None
+    ticket = db.get(Ticket, sess.ticket_id) if sess.ticket_id is not None else None
+    pending = dict(ticket.pending_action or {}) if ticket else {}
+    if pending and not pending.get("submitted_action"):
+        try:
+            created_at = (
+                datetime.fromisoformat(pending["created_at"])
+                if pending.get("created_at") else None
+            )
+        except (TypeError, ValueError):
+            created_at = None
+        if pending.get("order_id") is not None and pending.get("amount") is not None:
+            pending_view = PendingActionView(
+                id=_pending_action_id(ticket, pending),
+                type=str(pending.get("type") or ""),
+                order_id=int(pending["order_id"]),
+                amount=float(pending["amount"]),
+                created_at=created_at,
+            )
 
     return ChatSession(
         id=sess.id, ticket_id=sess.ticket_id,
@@ -189,6 +289,7 @@ def build_chat_session(db: Session, sess: AgentSession) -> ChatSession:
             model_name=sess.model_name, prompt_tokens=sess.prompt_tokens,
             completion_tokens=sess.completion_tokens, total_tokens=sess.total_tokens,
             estimated_cost=float(sess.estimated_cost or 0), cache_hit=sess.cache_hit),
+        pending_action=pending_view,
         total_latency_ms=latency,
     )
 
