@@ -17,7 +17,13 @@ build/
 node_modules/
 *.tsbuildinfo
 
-# 本地面试准备不入库；公开架构文档显式纳入版本管理。
+# 本地面试准备与历史归档不入库；当前架构、学习指南和真实问题记录纳入版本管理。
 docs/*
+!docs/README.md
+!docs/导航.md
 !docs/architecture/
 !docs/architecture/*.md
+!docs/guides/
+!docs/guides/*.md
+!docs/incidents/
+!docs/incidents/*.md

@@ -2,7 +2,7 @@
 
 把高频售后咨询从「人工反复处理」变成「Agent 自动识别 → 查询 → 判断 → 处理 → 升级 → 记录 → 评估」的完整业务流程。不是 FAQ 问答机器人，而是带**业务流程、工具调用、工单状态机、人工升级、退款幂等、异步削峰、评测与 guardrails 对抗**的单 Agent 工程项目。
 
-> 设计、ADR 与交付状态见 [`docs/architecture/`](docs/architecture/)。
+> 当前设计、学习路线与交付状态见 [项目文档入口](docs/README.md)。
 
 ## 解决什么问题
 大促/高峰/日常售后中，退款、退货、物流、催发货、投诉等大量涌入时，人工响应慢、处理不标准、系统切换多、质检困难。SupportFlow 把退款 / 物流两条高频链路工程化、可上线、可压测、可评测。
@@ -55,7 +55,7 @@ users / orders / order_items / logistics / refund_requests / tickets / ticket_me
 ## API
 - `GET /health`、`GET /`、`GET /metrics`（Prometheus）
 - `POST /api/auth/token`
-- `POST /api/chat/message`、`GET /api/chat/session/{id}`、`GET /api/chat/session/{id}/stream`
+- `POST /api/chat/message`、`POST /api/chat/action`（确认/取消）、`GET /api/chat/session/{id}`、`GET /api/chat/session/{id}/stream`
 - `GET /api/admin/metrics|tickets|sessions` 及工单/会话详情（需要 admin）
 - 接口文档：`/docs`
 
@@ -103,8 +103,10 @@ curl localhost:8000/health
 
 ## 测试
 ```bash
-pytest -q          # 全套（2026-07-30 本地 196 passed）
+pytest -q
 ```
+当前测试数量和最近验证日期见
+[项目状态](docs/architecture/项目状态.md)，避免多处复制后发生口径漂移。
 CI 同时执行离线评测、前端生产构建、真实 Redis + Celery broker/worker 端到端验收，以及 PostgreSQL 下退款和消息接入各 16 线程的并发幂等硬验。
 
 ## 评测
