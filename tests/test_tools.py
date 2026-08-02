@@ -1,5 +1,8 @@
 """M3 tools：统一 ToolResult + 自动写 agent_tool_calls + 幂等贯通到工具层。"""
-from app.db.models import AgentSession, AgentToolCall
+import json
+from datetime import datetime
+
+from app.db.models import AgentSession, AgentToolCall, Logistics
 from app.tools.base import ToolContext
 from app.tools.registry import build_tool_registry
 
@@ -31,6 +34,24 @@ def test_tool_returns_result_and_writes_audit(db, user_order):
     # 审计落库
     rows = db.query(AgentToolCall).filter_by(session_id=sid).all()
     assert len(rows) == 1 and rows[0].tool_name == "get_order_detail"
+
+
+def test_logistics_exception_tool_result_is_json_serializable(db, user_order):
+    u, o = user_order
+    db.add(Logistics(
+        order_id=o.id, status="in_transit", carrier="中通",
+        last_location="转运中心", last_update_time=datetime.utcnow(),
+    ))
+    db.flush()
+    reg = build_tool_registry()
+    ctx, _ = _ctx_with_session(db, u.id)
+
+    result, record = reg.execute(ctx, "check_logistics_exception", {"order_id": o.id})
+
+    assert result["ok"] is True
+    assert isinstance(result["data"]["last_update_time"], str)
+    assert json.loads(json.dumps(result))["data"]["status"] == "in_transit"
+    assert record.success is True
 
 
 def test_tool_unknown_returns_err(db, user_order):

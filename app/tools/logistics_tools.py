@@ -23,6 +23,9 @@ def check_logistics_exception(ctx: ToolContext, order_id: int):
     res = logistics_service.detect_exception(ctx.db, order_id, stale_hours)
     if not res.get("found"):
         return err("logistics_not_found", "暂无物流信息")
+    # ToolResult 会同时写 JSON 审计并回灌给模型，不能携带 datetime 等非 JSON 类型。
+    if res.get("last_update_time") is not None:
+        res["last_update_time"] = res["last_update_time"].isoformat()
     return ok(res)
 
 
