@@ -1,56 +1,139 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { CircleCheck, Clock, Cpu, Message, Plus, RefreshRight, Warning } from "@element-plus/icons-vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import {
+  Back,
+  ChatDotRound,
+  CircleCheck,
+  Clock,
+  Goods,
+  Plus,
+  RefreshRight,
+  Warning
+} from "@element-plus/icons-vue";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
-import type { AgentTimelineStep, ChatSession, TaskStatus } from "../api/types";
+import type { AgentTimelineStep, ChatSession, TaskStatus, UserOrder } from "../api/types";
 
-// 仅 mock 模式切换演示账号；真实接口身份来自 VITE_API_TOKEN。
-const demoAccounts = [
-  { id: "11", label: "demo（场景订单专用，见 seed_data 对照表）" },
-  { id: "13", label: "bulk_user001" },
-  { id: "14", label: "bulk_user002" },
-  { id: "15", label: "bulk_user003（VIP）" },
-  { id: "16", label: "bulk_user004" },
-  { id: "18", label: "bulk_user006（VIP）" }
-];
-const userId = ref(demoAccounts[0].id);
-const input = ref("我要退款 订单 DEMO-REFUND-LOW");
+const route = useRoute();
+const router = useRouter();
+const selectedOrder = ref<UserOrder | null>(null);
+const isGeneralQuestion = computed(() => route.query.general === "1");
+const input = ref("");
 const session = ref<ChatSession | null>(null);
-const ticketId = ref<string | undefined>(undefined);   // 同一对话续接的工单 id（P1 对话记忆）
+const ticketId = ref<string | undefined>();
 const loading = ref(false);
+const orderLoading = ref(true);
 const sending = ref(false);
 const error = ref("");
-const streaming = ref(false);   // 是否正经由 SSE 实时接收
+const streaming = ref(false);
+const actionDialogVisible = ref(false);
+const actionSubmitting = ref(false);
+const actionError = ref("");
+const actionAttempt = ref<{ decision: "confirm" | "cancel"; id: string } | null>(null);
 let pollTimer: number | undefined;
 let streamAbort: AbortController | undefined;
 
-// 新对话：丢弃当前工单与会话，下一条消息会新建工单
-function newConversation() {
-  stopStream();
-  ticketId.value = undefined;
-  session.value = null;
-  error.value = "";
-}
-// 切换用户时重置对话（工单归属某用户，避免跨用户复用）
-watch(userId, newConversation);
-
-const statusMeta: Record<TaskStatus, { label: string; type: "info" | "warning" | "success" | "danger"; text: string }> = {
-  queued: { label: "queued", type: "info", text: "排队中" },
-  processing: { label: "processing", type: "warning", text: "处理中" },
-  waiting_user_input: { label: "waiting_user_input", type: "warning", text: "等待您的回复" },
-  final: { label: "final", type: "success", text: "已解决" },
-  need_human: { label: "need_human", type: "danger", text: "转人工" },
-  failed: { label: "failed", type: "danger", text: "失败" }
+const statusMeta: Record<TaskStatus, {
+  text: string;
+  type: "info" | "warning" | "success" | "danger";
+}> = {
+  queued: { text: "已收到，等待处理", type: "info" },
+  processing: { text: "正在处理", type: "warning" },
+  waiting_user_input: { text: "等待您的回复", type: "warning" },
+  final: { text: "本轮处理完成", type: "success" },
+  need_human: { text: "已转交人工客服", type: "danger" },
+  failed: { text: "处理遇到问题", type: "danger" }
 };
 
-const isPolling = computed(() => session.value?.taskStatus === "queued" || session.value?.taskStatus === "processing");
-const tokenCost = computed(() => session.value ? `$${session.value.tokenUsage.estimatedCost.toFixed(4)}` : "$0.0000");
+const quickQuestions = computed(() => {
+  if (isGeneralQuestion.value) return ["想了解售后规则", "我要转人工", "如何申请电子发票"];
+  if (selectedOrder.value?.status === "shipped") {
+    return ["我的快递到哪里了？", "物流很久没有更新", "我想申请退款"];
+  }
+  if (selectedOrder.value?.status === "delivered") {
+    return ["我想申请退货", "商品有质量问题", "物流显示签收但没有收到"];
+  }
+  return ["我想申请退款", "什么时候可以发货？", "我要修改收货信息"];
+});
+
+const isPolling = computed(() =>
+  session.value?.taskStatus === "queued" || session.value?.taskStatus === "processing"
+);
+const pendingAction = computed(() => session.value?.pendingAction);
+const pendingOperation = computed(() =>
+  pendingAction.value?.type === "return_request" ? "退货" : "退款"
+);
+const pendingActionLabel = computed(() => `确认申请${pendingOperation.value}`);
+
+function formatMoney(value: number) {
+  return `¥${Number(value).toFixed(2)}`;
+}
+
+function productSummary(order: UserOrder) {
+  if (!order.items.length) return "订单商品";
+  return order.items.length > 1
+    ? `${order.items[0].productName} 等 ${order.items.length} 件商品`
+    : order.items[0].productName;
+}
+
+function senderName(sender: string) {
+  if (sender === "user") return "我";
+  if (sender === "human") return "人工客服";
+  if (sender === "system") return "系统消息";
+  return "智能客服";
+}
+
+function friendlyStepTitle(step: AgentTimelineStep) {
+  const titles: Record<AgentTimelineStep["kind"], string> = {
+    intent: "理解您的问题",
+    skill: "确定处理方式",
+    tool: "核对相关信息",
+    risk: "检查处理条件",
+    reply: "整理处理结果",
+    state: "更新处理进度"
+  };
+  return titles[step.kind] ?? "正在处理";
+}
+
+function friendlyStepDetail(step: AgentTimelineStep) {
+  if (step.status === "failed") return "这一步未能完成，系统会安排后续处理。";
+  if (step.status === "running") return "正在处理，请稍候。";
+  if (step.status === "success") return "已完成";
+  return "等待处理";
+}
 
 function stepIcon(step: AgentTimelineStep) {
   if (step.status === "failed") return Warning;
   if (step.status === "success") return CircleCheck;
   if (step.status === "running") return RefreshRight;
   return Clock;
+}
+
+async function loadOrder() {
+  const orderId = typeof route.query.orderId === "string" ? route.query.orderId : "";
+  if (!orderId) {
+    orderLoading.value = false;
+    if (!isGeneralQuestion.value) await router.replace("/orders");
+    return;
+  }
+  try {
+    selectedOrder.value = await api.getOrder(orderId);
+  } catch {
+    error.value = "该订单不存在或不属于当前账号，请重新选择订单。";
+  } finally {
+    orderLoading.value = false;
+  }
+}
+
+function newConversation() {
+  stopStream();
+  ticketId.value = undefined;
+  session.value = null;
+  input.value = "";
+  error.value = "";
+  actionDialogVisible.value = false;
+  actionError.value = "";
+  actionAttempt.value = null;
 }
 
 async function refreshSession(id: string) {
@@ -62,6 +145,8 @@ async function refreshSession(id: string) {
     } else {
       stopPoll();
     }
+  } catch {
+    error.value = "处理进度暂时无法更新，请稍后重试。";
   } finally {
     loading.value = false;
   }
@@ -77,11 +162,10 @@ function stopPoll() {
   pollTimer = undefined;
 }
 
-// 使用 fetch ReadableStream 消费 SSE，因此可携带 Authorization: Bearer。
 function startStream(id: string) {
   stopStream();
   if (api.useMock || typeof ReadableStream === "undefined") {
-    void refreshSession(id);   // 退回轮询
+    void refreshSession(id);
     return;
   }
   loading.value = true;
@@ -118,56 +202,135 @@ function stopStream() {
 
 async function submitMessage() {
   const content = input.value.trim();
-  if (!content || sending.value) return;
+  if (
+    !content || sending.value || pendingAction.value
+    || (!selectedOrder.value && !isGeneralQuestion.value)
+  ) return;
   sending.value = true;
   error.value = "";
   stopPoll();
   try {
     const response = await api.sendMessage({
-      ...(api.useMock ? { userId: userId.value } : {}),
       content,
       clientMessageId: `web-${Date.now()}`,
-      ticketId: ticketId.value          // 第二条起带上工单 id，后端续接上下文
+      ticketId: ticketId.value,
+      orderId: selectedOrder.value ? String(selectedOrder.value.id) : undefined
     });
-    ticketId.value = response.ticketId ?? ticketId.value;   // 记住工单，供下一轮续接
+    ticketId.value = response.ticketId ?? ticketId.value;
     input.value = "";
-    startStream(response.sessionId);        // SSE 实时接收（失败自动退回轮询）
+    startStream(response.sessionId);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "发送失败";
+    const detail = err instanceof Error ? err.message : "";
+    error.value = detail.includes("resource_access_denied")
+      ? "当前对话关联的订单已改变，请新建对话后重试。"
+      : "消息发送失败，请稍后重试。";
   } finally {
     sending.value = false;
   }
 }
 
+function openActionConfirmation() {
+  actionError.value = "";
+  actionDialogVisible.value = true;
+}
+
+function getActionAttempt(decision: "confirm" | "cancel") {
+  if (actionAttempt.value?.decision === decision) return actionAttempt.value.id;
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  const id = `web-action-${randomPart}`;
+  actionAttempt.value = { decision, id };
+  return id;
+}
+
+async function submitPendingAction(decision: "confirm" | "cancel") {
+  const action = pendingAction.value;
+  const activeTicketId = session.value?.ticketId ?? ticketId.value;
+  if (!action || !activeTicketId || actionSubmitting.value) return;
+  actionSubmitting.value = true;
+  actionError.value = "";
+  error.value = "";
+  stopStream();
+  try {
+    const response = await api.submitChatAction({
+      ticketId: String(activeTicketId),
+      actionId: action.id,
+      decision,
+      clientActionId: getActionAttempt(decision)
+    });
+    ticketId.value = response.ticketId ?? String(activeTicketId);
+    if (session.value) session.value.pendingAction = undefined;
+    actionDialogVisible.value = false;
+    actionAttempt.value = null;
+    startStream(response.sessionId);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "";
+    actionError.value = detail.includes("pending_action_invalid")
+      ? "确认内容已经变化或过期，请刷新页面后重新发起申请。"
+      : "操作提交失败，请稍后重试。";
+  } finally {
+    actionSubmitting.value = false;
+  }
+}
+
+onMounted(loadOrder);
 onBeforeUnmount(stopStream);
 </script>
 
 <template>
-  <section class="workspace chat-layout">
-    <header class="page-head">
+  <section class="workspace chat-layout" v-loading="orderLoading">
+    <header class="page-head chat-head">
       <div>
-        <p class="eyebrow">用户端 /chat · Bearer 身份认证</p>
-        <h1>售后对话</h1>
+        <button class="back-link" type="button" @click="router.push('/orders')">
+          <el-icon><Back /></el-icon>
+          返回我的订单
+        </button>
+        <p class="eyebrow">{{ isGeneralQuestion ? "其他问题咨询" : "订单售后" }}</p>
+        <h1>{{ selectedOrder ? productSummary(selectedOrder) : "售后对话" }}</h1>
       </div>
-      <el-button :icon="Plus" plain size="small" @click="newConversation">新对话</el-button>
-      <div class="status-strip" v-if="session">
-        <el-tag :type="statusMeta[session.taskStatus].type" effect="dark">
+      <div class="chat-head-actions">
+        <el-tag v-if="session" :type="statusMeta[session.taskStatus].type" effect="light">
           {{ statusMeta[session.taskStatus].text }}
         </el-tag>
-        <span>意图：{{ session.currentIntent ?? "待识别" }}</span>
-        <span>技能：{{ session.currentSkill ?? "待路由" }}</span>
-        <span>Token：{{ session.tokenUsage.totalTokens }}</span>
-        <span>成本：{{ tokenCost }}</span>
+        <el-button :icon="Plus" plain @click="newConversation">新建对话</el-button>
       </div>
     </header>
 
-    <section class="chat-panel">
+    <div v-if="selectedOrder" class="selected-order">
+      <div class="product-mark"><el-icon><Goods /></el-icon></div>
+      <div>
+        <small>本次咨询订单</small>
+        <strong>{{ selectedOrder.orderNo }}</strong>
+      </div>
+      <span>{{ selectedOrder.items.map((item) => `${item.productName} ×${item.quantity}`).join("，") || "订单商品" }}</span>
+      <b>{{ formatMoney(selectedOrder.totalAmount) }}</b>
+      <el-button text @click="router.push('/orders')">更换订单</el-button>
+    </div>
+    <div v-else-if="isGeneralQuestion" class="selected-order general-order">
+      <div class="product-mark"><el-icon><ChatDotRound /></el-icon></div>
+      <div>
+        <small>本次咨询</small>
+        <strong>不关联具体订单</strong>
+      </div>
+      <span>适合咨询售后规则、发票、优惠券或人工服务。</span>
+      <el-button text @click="router.push('/orders')">选择订单</el-button>
+    </div>
+
+    <el-alert v-if="error && !selectedOrder && !isGeneralQuestion" :title="error" type="error" show-icon :closable="false">
+      <el-button text @click="router.push('/orders')">重新选择订单</el-button>
+    </el-alert>
+
+    <section v-else class="chat-panel">
       <div class="conversation">
         <div class="message-list" v-loading="loading && !session">
           <div v-if="!session" class="empty-state">
-            <el-icon><Message /></el-icon>
-            <strong>输入一个售后问题开始演示</strong>
-            <span>前端通过 SSE 实时接收处理进度，逐步点亮 Agent 决策轨迹（异常自动退回轮询）。</span>
+            <el-icon><ChatDotRound /></el-icon>
+            <strong>{{ selectedOrder ? "请告诉我这笔订单遇到了什么问题" : "请告诉我您想咨询什么" }}</strong>
+            <span>订单信息已经准备好，不用再输入订单号。</span>
+            <div class="quick-questions">
+              <button v-for="question in quickQuestions" :key="question" type="button" @click="input = question">
+                {{ question }}
+              </button>
+            </div>
           </div>
           <article
             v-for="message in session?.messages ?? []"
@@ -176,40 +339,82 @@ onBeforeUnmount(stopStream);
             :class="message.sender"
           >
             <div class="bubble">
-              <small>{{ message.sender === "user" ? "用户" : "SupportFlow Agent" }}</small>
+              <small>{{ senderName(message.sender) }}</small>
               <p>{{ message.content }}</p>
             </div>
           </article>
+
+          <section v-if="pendingAction" class="pending-action-card" aria-label="待确认操作">
+            <div class="pending-action-copy">
+              <span>需要您确认</span>
+              <strong>{{ pendingActionLabel }}</strong>
+              <p>
+                本次{{ pendingOperation }}金额为
+                <b>{{ formatMoney(pendingAction.amount) }}</b>。确认前您仍可取消，不会创建申请。
+              </p>
+            </div>
+            <div class="pending-action-buttons">
+              <el-button
+                :disabled="actionSubmitting"
+                @click="submitPendingAction('cancel')"
+              >
+                取消申请
+              </el-button>
+              <el-button
+                type="primary"
+                :disabled="actionSubmitting"
+                @click="openActionConfirmation"
+              >
+                {{ pendingActionLabel }}
+              </el-button>
+            </div>
+            <p v-if="actionError" class="action-error">{{ actionError }}</p>
+          </section>
         </div>
 
         <form class="composer" @submit.prevent="submitMessage">
-          <el-select v-if="api.useMock" v-model="userId" class="user-input" aria-label="模拟登录账号">
-            <el-option v-for="acc in demoAccounts" :key="acc.id" :label="acc.label" :value="acc.id" />
-          </el-select>
           <el-input
             v-model="input"
             type="textarea"
-            :autosize="{ minRows: 2, maxRows: 4 }"
+            :autosize="{ minRows: 2, maxRows: 5 }"
             resize="none"
-            placeholder="输入售后问题；涉及订单可带订单号，例如：我要退款 订单 DEMO-REFUND-LOW"
+            :disabled="Boolean(pendingAction)"
+            :placeholder="pendingAction ? '请先确认或取消当前申请' : '请描述您遇到的问题…'"
+            @keydown.enter.exact.prevent="submitMessage"
           />
-          <el-button type="primary" native-type="submit" :loading="sending">
+          <el-button
+            type="primary"
+            native-type="submit"
+            :loading="sending"
+            :disabled="!input.trim() || Boolean(pendingAction)"
+          >
             发送
           </el-button>
+          <small>{{ pendingAction ? "请先处理上方待确认申请" : "按 Enter 发送，Shift + Enter 换行" }}</small>
         </form>
-        <el-alert v-if="error" :title="error" type="error" show-icon />
+        <el-alert v-if="error && (selectedOrder || isGeneralQuestion)" :title="error" type="error" show-icon :closable="false" />
       </div>
 
       <aside class="trace-panel">
         <div class="panel-title">
-          <el-icon><Cpu /></el-icon>
-          <span>Agent 执行轨迹</span>
-          <el-tag v-if="streaming" size="small" type="success">实时流式</el-tag>
-          <el-tag v-else-if="isPolling" size="small" type="warning">轮询中</el-tag>
+          <span>处理进度</span>
+          <span v-if="streaming || isPolling" class="live-status">
+            <i></i>实时更新
+          </span>
         </div>
-        <el-timeline>
+        <p class="progress-copy">系统会自动核对订单和售后条件，需要人工时会直接转交。</p>
+
+        <div v-if="!session" class="progress-waiting">
+          <ol>
+            <li><span>1</span>理解您的问题</li>
+            <li><span>2</span>核对订单信息</li>
+            <li><span>3</span>给出处理结果</li>
+          </ol>
+        </div>
+
+        <el-timeline v-else>
           <el-timeline-item
-            v-for="step in session?.steps ?? []"
+            v-for="step in session.steps"
             :key="step.id"
             :type="step.status === 'success' ? 'success' : step.status === 'failed' ? 'danger' : step.status === 'running' ? 'warning' : 'info'"
           >
@@ -218,23 +423,70 @@ onBeforeUnmount(stopStream);
                 <el-icon :class="{ spin: step.status === 'running' }">
                   <component :is="stepIcon(step)" />
                 </el-icon>
-                <strong>{{ step.title }}</strong>
+                <strong>{{ friendlyStepTitle(step) }}</strong>
               </div>
-              <p>{{ step.detail ?? "等待后端状态更新" }}</p>
-              <small v-if="step.latencyMs">{{ step.latencyMs }}ms</small>
+              <p>{{ friendlyStepDetail(step) }}</p>
             </div>
           </el-timeline-item>
         </el-timeline>
-        <div class="audit-preview" v-if="session?.toolCalls.length">
-          <strong>工具调用审计</strong>
-          <div v-for="call in session.toolCalls" :key="call.id">
-            <span>{{ call.toolName }}</span>
-            <el-tag size="small" :type="call.success ? 'success' : 'danger'">
-              {{ call.success ? "success" : "failed" }}
-            </el-tag>
-          </div>
+
+        <div v-if="session?.taskStatus === 'need_human'" class="human-note">
+          <strong>已为您转交人工客服</strong>
+          <span>订单和对话记录会一并提交，无需重复说明。</span>
         </div>
       </aside>
     </section>
+
+    <el-dialog
+      v-model="actionDialogVisible"
+      class="action-confirm-dialog"
+      width="min(480px, calc(100vw - 32px))"
+      :close-on-click-modal="false"
+      :show-close="!actionSubmitting"
+      @closed="actionError = ''"
+    >
+      <template #header>
+        <div class="confirm-dialog-head">
+          <span>最终确认</span>
+          <strong>确认提交{{ pendingOperation }}申请？</strong>
+        </div>
+      </template>
+
+      <div v-if="pendingAction" class="confirm-summary">
+        <div>
+          <span>操作</span>
+          <strong>申请{{ pendingOperation }}</strong>
+        </div>
+        <div>
+          <span>订单</span>
+          <strong>{{ selectedOrder?.orderNo ?? `#${pendingAction.orderId}` }}</strong>
+        </div>
+        <div>
+          <span>商品</span>
+          <strong>{{ selectedOrder ? productSummary(selectedOrder) : "当前订单商品" }}</strong>
+        </div>
+        <div class="amount-row">
+          <span>申请金额</span>
+          <strong>{{ formatMoney(pendingAction.amount) }}</strong>
+        </div>
+      </div>
+      <p class="confirm-warning">
+        点击“确认提交”后，系统才会正式创建{{ pendingOperation }}申请。请核对以上信息。
+      </p>
+      <p v-if="actionError" class="action-error">{{ actionError }}</p>
+
+      <template #footer>
+        <el-button :disabled="actionSubmitting" @click="actionDialogVisible = false">
+          返回检查
+        </el-button>
+        <el-button
+          type="danger"
+          :loading="actionSubmitting"
+          @click="submitPendingAction('confirm')"
+        >
+          确认提交
+        </el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>

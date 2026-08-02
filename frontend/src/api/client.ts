@@ -2,6 +2,7 @@ import { mockApi } from "./mock";
 import { auth } from "../auth";
 import type {
   AdminMetrics,
+  ChatActionRequest,
   ChatSession,
   SendMessageRequest,
   SendMessageResponse,
@@ -10,7 +11,8 @@ import type {
   TicketDetail,
   TicketAction,
   TicketSummary,
-  TokenResponse
+  TokenResponse,
+  UserOrder
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -110,8 +112,23 @@ export const api = {
       () => mockApi.sendMessage(payload)
     );
   },
+  submitChatAction(payload: ChatActionRequest): Promise<SendMessageResponse> {
+    return withFallback(
+      () => request<SendMessageResponse>("/chat/action", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }),
+      () => mockApi.submitAction(payload)
+    );
+  },
   getChatSession(id: string): Promise<ChatSession> {
     return withFallback(() => request<ChatSession>(`/chat/session/${id}`), () => mockApi.getSession(id));
+  },
+  listOrders(): Promise<UserOrder[]> {
+    return withFallback(() => request<UserOrder[]>("/orders"), () => mockApi.listOrders());
+  },
+  getOrder(id: string): Promise<UserOrder> {
+    return withFallback(() => request<UserOrder>(`/orders/${id}`), () => mockApi.getOrder(id));
   },
   getMetrics(): Promise<AdminMetrics> {
     return withFallback(() => request<AdminMetrics>("/admin/metrics"), () => mockApi.getMetrics());

@@ -50,6 +50,7 @@ export interface ChatSession {
   messages: ChatMessage[];
   steps: AgentTimelineStep[];
   toolCalls: AgentToolCall[];
+  pendingAction?: PendingChatAction;
   tokenUsage: {
     modelName?: string;
     promptTokens: number;
@@ -60,17 +61,53 @@ export interface ChatSession {
   };
 }
 
+export interface PendingChatAction {
+  id: string;
+  type: "refund_request" | "return_request";
+  orderId: string;
+  amount: number;
+  createdAt?: string;
+}
+
 export interface SendMessageRequest {
   userId?: string;           // mock 兼容；真实后端身份来自 Bearer Token
   content: string;
   clientMessageId: string;
   ticketId?: string;        // 多轮对话：带同一工单 id 续接上下文（P1 对话记忆）
+  orderId?: string;         // 首轮由用户从本人订单中选择，不要求用户手输订单号
+}
+
+export interface ChatActionRequest {
+  ticketId: string;
+  actionId: string;
+  decision: "confirm" | "cancel";
+  clientActionId: string;
 }
 
 export interface SendMessageResponse {
   sessionId: string;
   ticketId?: string;
   taskStatus: TaskStatus;
+}
+
+export interface UserOrderItem {
+  id: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface UserOrder {
+  id: string;
+  orderNo: string;
+  status: string;
+  totalAmount: number;
+  productType: string;
+  paidAt?: string;
+  shippedAt?: string;
+  deliveredAt?: string;
+  createdAt?: string;
+  items: UserOrderItem[];
 }
 
 export interface AdminMetrics {

@@ -1,5 +1,6 @@
 import type {
   AdminMetrics,
+  ChatActionRequest,
   ChatMessage,
   ChatSession,
   SendMessageRequest,
@@ -7,10 +8,51 @@ import type {
   SessionDetail,
   SessionSummary,
   TicketDetail,
-  TicketSummary
+  TicketSummary,
+  UserOrder
 } from "./types";
 
-const sessions = new Map<string, { createdAt: number; content: string; userId: string }>();
+const sessions = new Map<string, {
+  createdAt: number;
+  content: string;
+  userId: string;
+  actionDecision?: "confirm" | "cancel";
+}>();
+
+const demoOrders: UserOrder[] = [
+  {
+    id: "101",
+    orderNo: "DEMO-REFUND-LOW",
+    status: "paid",
+    totalAmount: 120,
+    productType: "normal",
+    paidAt: "2026-07-26T09:30:00Z",
+    createdAt: "2026-07-26T09:28:00Z",
+    items: [{ id: "1001", productName: "蓝牙降噪耳机", quantity: 1, unitPrice: 120 }]
+  },
+  {
+    id: "102",
+    orderNo: "DEMO-LOGI-NORMAL",
+    status: "shipped",
+    totalAmount: 238.9,
+    productType: "normal",
+    paidAt: "2026-07-24T12:15:00Z",
+    shippedAt: "2026-07-25T08:20:00Z",
+    createdAt: "2026-07-24T12:12:00Z",
+    items: [{ id: "1002", productName: "机械键盘", quantity: 1, unitPrice: 238.9 }]
+  },
+  {
+    id: "103",
+    orderNo: "DEMO-RETURN",
+    status: "delivered",
+    totalAmount: 329,
+    productType: "normal",
+    paidAt: "2026-07-18T16:40:00Z",
+    deliveredAt: "2026-07-22T10:12:00Z",
+    createdAt: "2026-07-18T16:38:00Z",
+    items: [{ id: "1003", productName: "轻量运动鞋", quantity: 1, unitPrice: 329 }]
+  }
+];
 
 const nowIso = () => new Date().toISOString();
 
@@ -21,6 +63,46 @@ function elapsedStage(createdAt: number): number {
 function buildSession(id: string): ChatSession {
   const item = sessions.get(id) ?? { createdAt: Date.now() - 5000, content: "我想申请订单 SO202606180018 的退款", userId: "1" };
   const stage = elapsedStage(item.createdAt);
+  const isAction = Boolean(item.actionDecision);
+  if (isAction) {
+    const completed = stage >= 2;
+    const reply = item.actionDecision === "confirm"
+      ? "已为您创建退款申请（金额 120 元，单号 #R-1001），我们将尽快处理。"
+      : "已取消本次退款申请，未提交。";
+    return {
+      id,
+      ticketId: "T-20260618-0018",
+      taskStatus: completed ? "final" : stage === 0 ? "queued" : "processing",
+      currentIntent: item.actionDecision === "confirm" ? "refund_confirmation" : "cancel_refund",
+      currentSkill: "refund_handling",
+      currentState: completed ? "resolved_by_agent" : "processing",
+      finalStatus: completed ? "resolved_by_agent" : undefined,
+      latestReply: completed ? reply : undefined,
+      messages: [
+        {
+          id: `${id}-user`,
+          sender: "user",
+          content: item.content,
+          createdAt: new Date(item.createdAt).toISOString()
+        },
+        ...(completed ? [{
+          id: `${id}-agent`,
+          sender: "agent" as const,
+          content: reply,
+          createdAt: nowIso()
+        }] : [])
+      ],
+      steps: [],
+      toolCalls: [],
+      tokenUsage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        estimatedCost: 0,
+        cacheHit: true
+      }
+    };
+  }
   const status = stage >= 5 ? "waiting_user_input" : stage === 0 ? "queued" : "processing";
   const userMessage: ChatMessage = {
     id: `${id}-user`,
@@ -45,6 +127,13 @@ function buildSession(id: string): ChatSession {
     finalStatus: stage >= 5 ? "waiting_user_confirm" : undefined,
     latestReply: stage >= 5 ? agentMessage.content : undefined,
     messages: stage >= 5 ? [userMessage, agentMessage] : [userMessage],
+    pendingAction: stage >= 5 ? {
+      id: "mock-pending-action",
+      type: "refund_request",
+      orderId: "101",
+      amount: 120,
+      createdAt: nowIso()
+    } : undefined,
     steps: [
       { id: "intent", kind: "intent", title: "识别意图", detail: "退款申请", status: stage >= 1 ? "success" : stage === 0 ? "running" : "pending" },
       { id: "skill", kind: "skill", title: "路由技能", detail: "RefundHandlingSkill", status: stage >= 2 ? "success" : stage === 1 ? "running" : "pending" },
@@ -87,12 +176,30 @@ function buildSession(id: string): ChatSession {
 }
 
 export const mockApi = {
+  async listOrders(): Promise<UserOrder[]> {
+    return demoOrders;
+  },
+  async getOrder(id: string): Promise<UserOrder> {
+    const order = demoOrders.find((item) => String(item.id) === String(id));
+    if (!order) throw new Error("订单不存在或不属于当前用户");
+    return order;
+  },
   async sendMessage(req: SendMessageRequest): Promise<SendMessageResponse> {
     const sessionId = `S-${Date.now()}`;
     sessions.set(sessionId, {
       createdAt: Date.now(), content: req.content, userId: req.userId ?? "11"
     });
     return { sessionId, ticketId: "T-20260618-0018", taskStatus: "queued" };
+  },
+  async submitAction(req: ChatActionRequest): Promise<SendMessageResponse> {
+    const sessionId = `S-action-${Date.now()}`;
+    sessions.set(sessionId, {
+      createdAt: Date.now(),
+      content: req.decision === "confirm" ? "确认提交退款申请" : "取消本次退款申请",
+      userId: "11",
+      actionDecision: req.decision
+    });
+    return { sessionId, ticketId: req.ticketId, taskStatus: "queued" };
   },
   async getSession(id: string): Promise<ChatSession> {
     return buildSession(id);
