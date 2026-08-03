@@ -28,6 +28,7 @@ def test_real_scenario_dataset_is_comprehensive_and_valid():
         "business_boundaries",
         "security_and_guardrails",
         "anomaly_and_recovery",
+        "multi_intent",
     }
     assert sum(case.get("severity") == "critical" for case in cases) >= 20
 

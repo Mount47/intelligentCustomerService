@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -68,6 +69,19 @@ class IntentResult:
     reason: str = ""
 
 
+@dataclass
+class MultiIntentResult:
+    """单轮结构化意图集合；第一阶段最多容纳三个同订单意图。"""
+    intents: list[IntentResult]
+    requires_clarification: bool = False
+    reason: str = ""
+    order_references: tuple[str, ...] = ()
+
+    @property
+    def is_multi(self) -> bool:
+        return len(self.intents) > 1
+
+
 # 规则关键词表（命中即候选，快、零成本、可评测）。顺序靠前者优先。
 _KEYWORDS: list[tuple[Intents, tuple[str, ...]]] = [
     (Intents.HUMAN_HANDOFF, ("人工", "转人工", "客服", "投诉到底")),
@@ -111,6 +125,10 @@ _NEGATED_INTENT_CUES: dict[Intents, tuple[str, ...]] = {
     Intents.INVOICE_REQUEST: ("不开发票", "不用发票", "不要发票"),
 }
 _ESCALATION_CUES = ("曝光", "媒体", "消协", "12315", "投诉到底")
+_ORDER_REFERENCE_RE = re.compile(
+    r"(?:订单(?:号)?\s*[:：]?\s*)([A-Za-z0-9][A-Za-z0-9-]{2,39})",
+    re.IGNORECASE,
+)
 
 
 def _is_confirm(text: str) -> bool:
@@ -208,6 +226,67 @@ class HybridIntentClassifier:
                 logger.info("intent(llm)=%s", picked.value)
                 return picked, False
         return intent, False
+
+    def classify_multi_intent(self, message: str, history=None) -> MultiIntentResult:
+        """召回一轮中的多个明确意图，不用模型把多个任务强行压成一个。"""
+        text = (message or "").lower().strip()
+        references = tuple(dict.fromkeys(_ORDER_REFERENCE_RE.findall(message or "")))
+        if len(references) > 1:
+            return MultiIntentResult(
+                [], True, "一轮中引用了多个订单，第一阶段仅支持同一订单", references
+            )
+
+        # 超范围仍是最高优先级硬闸，不能与业务任务混跑。
+        if _has(text, _OUT_OF_SCOPE_CUES):
+            result = self.classify_intent(message, history=history)
+            return MultiIntentResult([result], order_references=references)
+
+        candidates = self.rule.recall(text)
+        for candidate in list(candidates):
+            if _has(text, _NEGATED_INTENT_CUES.get(candidate, ())):
+                candidates.remove(candidate)
+
+        is_q = _has(text, _INTERROGATIVE)
+        is_neg = _has(text, _NEGATION) and not _has(text, _DELIBERATION)
+        # “别退款，只查物流”是对写意图的排除，不是一个“取消退款+查物流”组合。
+        if is_neg and any(intent not in _REFUND_FAMILY for intent in candidates):
+            candidates = [intent for intent in candidates if intent not in _REFUND_FAMILY]
+
+        if not candidates:
+            result = self.classify_intent(message, history=history)
+            return MultiIntentResult([result], order_references=references)
+
+        results: list[IntentResult] = []
+        for candidate in candidates:
+            if candidate in _REFUND_FAMILY:
+                if is_neg:
+                    result = self._build_result(
+                        Intents.CANCEL_REFUND, source="rule", is_q=False, is_neg=True,
+                        reason="多意图中退款表达被否定",
+                    )
+                elif is_q:
+                    result = self._build_result(
+                        Intents.REFUND_INQUIRY, source="rule", is_q=True, is_neg=False,
+                        reason="多意图中的退款疑问",
+                    )
+                else:
+                    result = self._build_result(
+                        candidate, source="rule", is_q=False, is_neg=False,
+                        reason="多意图中的退款/退货申请",
+                    )
+            else:
+                result = self._build_result(
+                    candidate, source="rule", is_q=is_q, is_neg=False,
+                    reason="多意图规则召回",
+                )
+            if all(existing.intent != result.intent for existing in results):
+                results.append(result)
+
+        if len(results) > 3:
+            return MultiIntentResult(
+                results, True, "单轮意图超过三个，请拆分后重试", references
+            )
+        return MultiIntentResult(results, order_references=references)
 
     # ---- 新：结构化意图（关键词召回 → 极性 → 决策；召回不确定时带历史 defer LLM） ----
     def classify_intent(self, message: str, history=None) -> IntentResult:

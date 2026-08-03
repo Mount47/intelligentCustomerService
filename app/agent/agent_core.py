@@ -23,6 +23,7 @@ from app.agent.intent_classifier import (
 )
 from app.agent.skill_router import SkillRouter
 from app.agent.state_machine import StateMachine, States
+from app.agent.task_planner import OutcomeCoordinator, TaskOutcome, TaskPlanner
 from app.core.logging import get_logger
 from app.llm.base import LLMClient, Msg, ToolSpec
 from app.llm.errors import ContextWindowExceeded
@@ -53,6 +54,8 @@ class AgentCore:
         state_machine: StateMachine,
         guardrails: Guardrails,
         tool_registry=None,   # M3 接入；骨架为 None
+        task_planner: TaskPlanner | None = None,
+        outcome_coordinator: OutcomeCoordinator | None = None,
     ) -> None:
         self.llm = llm
         self.classifier = classifier
@@ -60,6 +63,8 @@ class AgentCore:
         self.sm = state_machine
         self.guardrails = guardrails
         self.tools = tool_registry
+        self.task_planner = task_planner or TaskPlanner()
+        self.outcome_coordinator = outcome_coordinator or OutcomeCoordinator()
 
     def handle(self, ctx: AgentContext, tool_ctx: "ToolContext | None" = None) -> Decision:
         # 0 初始状态
@@ -89,8 +94,18 @@ class AgentCore:
         if ctx.state == States.INFO_REQUIRED and ctx.pending_context:
             return self._handle_required_info(ctx, tool_ctx)
 
-        # 4 意图识别（关键词召回 → 极性判定 → 结构化 IntentResult；召回不确定时带历史 defer LLM）
-        intent_result = self.classifier.classify_intent(ctx.message, history=ctx.history)
+        # 4 意图识别：先得到结构化集合；单意图继续复用原路径，多意图交给线性任务规划器。
+        multi_result = self.classifier.classify_multi_intent(ctx.message, history=ctx.history)
+        ctx.multi_intent_result = multi_result
+        if multi_result.requires_clarification or multi_result.is_multi:
+            ctx.intent = "multi_intent"
+            ctx.skill = "task_planner"
+            ctx.state = self.sm.transition(
+                ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id
+            )
+            return self._handle_multi_intent(ctx, multi_result, tool_ctx)
+
+        intent_result = multi_result.intents[0]
         ctx.intent = intent_result.intent.value
         ctx.intent_result = intent_result
         ctx.state = self.sm.transition(ctx.state, States.INTENT_DETECTED, ticket_id=ctx.ticket_id)
@@ -125,6 +140,60 @@ class AgentCore:
             # 8 Skill 据结果产出决策（可经 tool_ctx 执行确定性写操作）
             decision = skill.finalize(ctx, tool_ctx)
 
+        return self._finish(ctx, decision)
+
+    def _handle_multi_intent(self, ctx: AgentContext, multi_result,
+                             tool_ctx: "ToolContext | None") -> Decision:
+        task_plan = self.task_planner.plan(
+            multi_result, has_order=ctx.order_id is not None
+        )
+        if task_plan.requires_clarification:
+            reason = task_plan.reason or "这些诉求需要拆开处理"
+            return self._finish(ctx, Decision(
+                f"{reason}。请一次只围绕同一订单说明最多三个诉求，且只提交一个退款或退货申请。",
+                States.INFO_REQUIRED,
+                required_info=["明确本轮诉求"],
+            ))
+
+        ctx.multi_intent_mode = True
+        outcomes: list[TaskOutcome] = []
+        base_history = list(ctx.history)
+        for task in task_plan.tasks:
+            result = task.intent_result
+            ctx.intent_result = result
+            ctx.intent = result.intent.value
+            skill = self.router.route(result.intent)
+            ctx.skill = skill.name
+            skill_plan = skill.plan(ctx)
+            if skill_plan.required_info:
+                decision = Decision(
+                    "为继续处理，请补充：" + "、".join(skill_plan.required_info),
+                    States.INFO_REQUIRED,
+                    required_info=skill_plan.required_info,
+                )
+            else:
+                # 各任务共享用户历史和订单事实，但不把上一任务的模型草稿塞给下一任务。
+                ctx.history = list(base_history)
+                self._run_loop(ctx, skill_plan, tool_ctx)
+                decision = skill.finalize(ctx, tool_ctx)
+            outcome = TaskOutcome(
+                intent=result.intent,
+                skill=skill.name,
+                reply=decision.reply,
+                state=decision.next_state,
+                need_handoff=decision.need_handoff,
+                handoff_reason=decision.handoff_reason,
+            )
+            outcomes.append(outcome)
+            # 只读任务一旦发现投诉、丢件或高风险，后续写任务必须停止。
+            if decision.need_handoff or decision.next_state == States.NEED_HUMAN:
+                break
+
+        ctx.history = base_history
+        ctx.task_outcomes = outcomes
+        decision = self.outcome_coordinator.combine(outcomes)
+        ctx.intent = "multi_intent"
+        ctx.skill = "task_planner"
         return self._finish(ctx, decision)
 
     def _remember_required_info(self, ctx: AgentContext, skill_name: str,
@@ -249,6 +318,13 @@ class AgentCore:
             ctx.intent, ctx.skill = Intents.REFUND_CONFIRMATION.value, "refund_handling"
             return self._finish(ctx, Decision(
                 "请回复『确认』以继续，或『取消』放弃本次申请。", States.WAITING_USER_CONFIRM))
+        if self._confirm_contains_new_request(ctx, tool_ctx):
+            ctx.intent, ctx.skill = Intents.REFUND_CONFIRMATION.value, "refund_handling"
+            return self._finish(ctx, Decision(
+                "确认退款或退货时不能同时夹带新诉求。请先单独回复『确认』或『取消』，"
+                "完成后再查询其他事项。",
+                States.WAITING_USER_CONFIRM,
+            ))
         intent = (Intents.REFUND_CONFIRMATION if sig == ConfirmSignal.CONFIRM
                   else Intents.CANCEL_REFUND)
         ctx.intent = intent.value
@@ -263,6 +339,29 @@ class AgentCore:
         self._run_loop(ctx, plan, tool_ctx)
         decision = skill.finalize(ctx, tool_ctx)
         return self._finish(ctx, decision)
+
+    def _confirm_contains_new_request(self, ctx: AgentContext,
+                                      tool_ctx: "ToolContext | None") -> bool:
+        """确认协议只允许当前 pending_action 对应的退款族表达。"""
+        if tool_ctx is None:
+            return False
+        from app.db.models import Ticket
+
+        ticket = tool_ctx.db.get(Ticket, ctx.ticket_id)
+        pending_type = (ticket.pending_action or {}).get("type") if ticket else None
+        allowed = {
+            Intents.RETURN_REQUEST if pending_type == Intents.RETURN_REQUEST.value
+            else Intents.REFUND_REQUEST
+        }
+        candidates = set(self.classifier.rule.recall(ctx.message))
+        non_refund = candidates - {Intents.REFUND_REQUEST, Intents.RETURN_REQUEST}
+        if non_refund:
+            return True
+        text = ctx.message or ""
+        # “帮我退吧”是合法确认；只有明确切换退款/退货种类才视为夹带第二个写诉求。
+        if allowed == {Intents.REFUND_REQUEST}:
+            return any(cue in text for cue in ("退货", "退回", "寄回"))
+        return any(cue in text for cue in ("退款", "退钱", "退费"))
 
     def _finish(self, ctx: AgentContext, decision: Decision) -> Decision:
         # 9 guardrails 回复后校验（绝不绕过）；10 状态机集中转移
@@ -377,4 +476,6 @@ def build_default_agent(llm: LLMClient | None = None, tool_registry=None) -> Age
         state_machine=StateMachine(),
         guardrails=Guardrails(),
         tool_registry=tool_registry,
+        task_planner=TaskPlanner(),
+        outcome_coordinator=OutcomeCoordinator(),
     )

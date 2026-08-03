@@ -527,6 +527,81 @@
       "tags": ["delivered", "false_positive_handoff"],
       "orders": [{"alias": "target", "status": "delivered", "delivered_days_ago": 1, "amount": 138.0, "logistics": {"status": "delivered", "hours_ago": 8, "last_location": "丰巢快递柜"}}],
       "turns": [{"message": "帮我确认一下，这单是不是已经到了？", "attach_order": "target", "expected": {"intents": ["logistics_query"], "skill": "logistics_exception", "state": "resolved_by_agent", "handoff": false, "reply_all": ["已签收", "丰巢快递柜"]}}]
+    },
+    {
+      "case_id": "multi-order-and-logistics-query",
+      "category": "multi_intent",
+      "severity": "high",
+      "tags": ["multi_intent", "read_read", "order", "logistics"],
+      "orders": [{"alias": "target", "status": "shipped", "amount": 239.0, "items": [{"product_name": "双肩包", "quantity": 1, "unit_price": 239.0}], "logistics": {"status": "in_transit", "hours_ago": 2, "last_location": "苏州分拨中心"}}],
+      "turns": [{"message": "查一下订单状态，再看看物流到哪了", "attach_order": "target", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "resolved_by_agent", "handoff": false, "refund_count": 0, "reply_all": ["【订单信息】", "【物流信息】", "苏州分拨中心"]}}]
+    },
+    {
+      "case_id": "multi-logistics-and-refund-inquiry",
+      "category": "multi_intent",
+      "severity": "high",
+      "tags": ["multi_intent", "read_read", "refund_inquiry"],
+      "orders": [{"alias": "target", "status": "shipped", "amount": 128.0, "logistics": {"status": "in_transit", "hours_ago": 2, "last_location": "南京转运中心"}}],
+      "turns": [{"message": "查一下物流，另外这单能退款吗？", "attach_order": "target", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "resolved_by_agent", "handoff": false, "refund_count": 0, "reply_all": ["【物流信息】", "【退款说明】", "南京转运中心"]}}]
+    },
+    {
+      "case_id": "multi-logistics-and-refund-request",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "read_write", "confirmation_gate"],
+      "orders": [{"alias": "target", "status": "shipped", "amount": 168.0, "logistics": {"status": "in_transit", "hours_ago": 3, "last_location": "无锡分拨中心"}}],
+      "turns": [{"message": "查一下物流，我还要申请退款", "attach_order": "target", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "waiting_user_confirm", "handoff": false, "refund_count": 0, "reply_all": ["【物流信息】", "【退款申请】", "无锡分拨中心"]}}]
+    },
+    {
+      "case_id": "multi-logistics-and-return-request",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "read_write", "return", "confirmation_gate"],
+      "orders": [{"alias": "target", "status": "delivered", "delivered_days_ago": 2, "amount": 198.0, "logistics": {"status": "delivered", "hours_ago": 30, "last_location": "本人签收"}}],
+      "turns": [{"message": "查一下物流，我还要申请退货", "attach_order": "target", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "waiting_user_confirm", "handoff": false, "refund_count": 0, "reply_all": ["【物流信息】", "【退货申请】"]}}]
+    },
+    {
+      "case_id": "multi-negated-refund-only-logistics",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "negation", "no_write"],
+      "orders": [{"alias": "target", "status": "shipped", "amount": 88.0, "logistics": {"status": "in_transit", "hours_ago": 1, "last_location": "杭州派送网点"}}],
+      "turns": [{"message": "别退款，只查物流", "attach_order": "target", "expected": {"intents": ["logistics_query"], "skill": "logistics_exception", "state": "resolved_by_agent", "handoff": false, "refund_count": 0, "reply_all": ["杭州派送网点"]}}]
+    },
+    {
+      "case_id": "multi-complaint-prioritizes-handoff",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "complaint", "priority", "no_write"],
+      "orders": [{"alias": "target", "status": "delivered", "delivered_days_ago": 1, "amount": 188.0}],
+      "turns": [{"message": "商品质量太差，我要投诉并退款", "attach_order": "target", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "need_human", "handoff": true, "refund_count": 0, "reply_all": ["【人工处理】"]}}]
+    },
+    {
+      "case_id": "multi-two-write-intents-clarify",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "two_writes", "clarification", "no_write"],
+      "orders": [{"alias": "target", "status": "delivered", "delivered_days_ago": 2, "amount": 128.0}],
+      "turns": [{"message": "我要退款，同时还要申请退货", "attach_order": "target", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "info_required", "handoff": false, "refund_count": 0, "reply_all": ["只选择一个"]}}]
+    },
+    {
+      "case_id": "multi-confirmation-cannot-carry-new-query",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "confirmation", "mixed_request", "no_write"],
+      "orders": [{"alias": "target", "status": "shipped", "amount": 108.0, "logistics": {"status": "in_transit", "hours_ago": 2, "last_location": "上海转运中心"}}],
+      "turns": [
+        {"message": "我要退款", "attach_order": "target", "expected": {"state": "waiting_user_confirm", "refund_count": 0}},
+        {"message": "确认，顺便查一下物流", "expected": {"state": "waiting_user_confirm", "refund_count": 0, "reply_all": ["不能同时夹带新诉求"], "reply_none": ["已创建退款申请"]}}
+      ]
+    },
+    {
+      "case_id": "multi-cross-order-must-clarify",
+      "category": "multi_intent",
+      "severity": "critical",
+      "tags": ["multi_intent", "cross_order", "clarification", "no_write"],
+      "orders": [{"alias": "first", "status": "shipped", "amount": 66.0, "logistics": {"status": "in_transit", "hours_ago": 2}}, {"alias": "second", "status": "paid", "amount": 77.0}],
+      "turns": [{"message": "查询订单 {{order_no:first}} 的物流，再给订单 {{order_no:second}} 退款", "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "info_required", "handoff": false, "refund_count": 0, "reply_all": ["多个订单"]}}]
     }
   ]
 }

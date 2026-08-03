@@ -50,10 +50,18 @@ class LogisticsExceptionSkill:
             return Decision("请提供需要查询的订单号。", States.INFO_REQUIRED,
                             required_info=["订单号"])
 
+        order = order_service.get_order(db, ctx.order_id)
+        if order is None or order.user_id != ctx.user_id:
+            return Decision(
+                "未能核实该订单归属，已为您转人工核实。",
+                States.NEED_HUMAN,
+                need_handoff=True,
+                handoff_reason="not_owner" if order is not None else "order_not_found",
+            )
+
         stale_hours = get_settings().logistics_stale_hours
         exc = logistics_service.detect_exception(db, ctx.order_id, stale_hours)
         if not exc.get("found"):
-            order = order_service.get_order(db, ctx.order_id)
             # 未发货（待付款/已付款）本就没有物流记录，是正常状态，不是异常
             if order is not None and order.status in ("pending_payment", "paid"):
                 return Decision("您的订单已付款，正在备货中，暂未发货，发货后会同步物流信息。",

@@ -85,9 +85,12 @@ class RefundHandlingSkill:
                             States.RESOLVED_BY_AGENT)
         # 高风险：不经用户确认，直接建草稿(pending_human) + 升级转人工
         if policy["require_human_approval"]:
-            refund_service.create_refund_draft(
-                db, user_id=ctx.user_id, order_id=ctx.order_id,
-                refund_reason=ctx.message, commit=False)
+            # 多意图轮次只能产生一个低风险 pending_action。发现高风险时直接转人工，
+            # 不在组合执行中创建 RefundRequest，避免用户把查询语句当成资金操作确认。
+            if not ctx.multi_intent_mode:
+                refund_service.create_refund_draft(
+                    db, user_id=ctx.user_id, order_id=ctx.order_id,
+                    refund_reason=ctx.message, commit=False)
             t = ticket_service.create_ticket(
                 db, ctx.user_id, "refund", priority="high", order_id=ctx.order_id)
             ticket_service.update_status(db, t.id, States.NEED_HUMAN)

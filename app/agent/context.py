@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Protocol, TypedDict
 from app.llm.base import Msg, Usage
 
 if TYPE_CHECKING:
-    from app.agent.intent_classifier import IntentResult
+    from app.agent.intent_classifier import IntentResult, MultiIntentResult
+    from app.agent.task_planner import TaskOutcome
 
 
 class ToolResult(TypedDict):
@@ -92,6 +93,9 @@ class AgentContext:
     token_acct: TokenAcct = field(default_factory=TokenAcct)
     decision: "Decision | None" = None
     intent_result: "IntentResult | None" = None   # 结构化意图（极性/动作/置信/需确认）
+    multi_intent_result: "MultiIntentResult | None" = None
+    task_outcomes: list["TaskOutcome"] = field(default_factory=list)
+    multi_intent_mode: bool = False
     pending_context: dict | None = None            # INFO_REQUIRED 跨轮意图/槽位上下文
 
 
