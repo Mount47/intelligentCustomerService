@@ -200,6 +200,7 @@ def build_admin_metrics(db: Session) -> AdminMetrics:
         p95_latency_ms=_p95(durations),
         active_sessions=by.get("queued", 0) + by.get("processing", 0),
         queue_depth=m["queue_depth"],
+        outbox=m["outbox"],
         sessions_by_task_status=by,
         total_tokens=m["cost"]["total_tokens"],
         avg_tokens_per_session=m["cost"]["avg_tokens_per_session"],

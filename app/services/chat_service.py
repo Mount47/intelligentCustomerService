@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.agent.state_machine import States
+from app.core.config import get_settings
 from app.core.exceptions import InvalidPendingAction, ResourceAccessDenied, SupportFlowError
 from app.db.models import AgentSession, AgentToolCall, Order, Ticket, TicketMessage
 from app.schemas.chat import (
@@ -30,7 +31,8 @@ from app.schemas.chat import (
     TokenUsage,
 )
 from app.schemas.common import to_frontend_task_status
-from app.services import pending_action_service, ticket_service
+from app.observability.tracing import get_trace_id
+from app.services import outbox_service, pending_action_service, ticket_service
 
 # 工具名 → 中文标签（Agent 执行轨迹展示用）
 TOOL_LABELS = {
@@ -157,6 +159,17 @@ def accept_message(db: Session, payload: ChatMessageIn) -> tuple[AgentSession, b
         if sess is None:
             raise
         return sess, True
+
+    # 待投递事件与消息/会话同事务落库（可靠投递）。二者要么一起可见、要么一起回滚，
+    # 消除"已提交但没入队"的窗口；实际投递由 API 内联快路或 outbox relay 完成。
+    if get_settings().outbox_enabled:
+        outbox_service.record_event(
+            db,
+            topic=outbox_service.AGENT_TOPIC,
+            payload={"session_id": sess.id, "trace_id": get_trace_id()},
+            dedup_key=outbox_service.dedup_key_for(outbox_service.AGENT_TOPIC, sess.id),
+            visible_after_sec=get_settings().outbox_relay_delay_sec,
+        )
 
     db.commit()
     return sess, False

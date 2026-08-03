@@ -7,6 +7,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import AgentSession, AgentToolCall, RefundRequest, Ticket
 from app.db.redis_client import celery_broker_client
@@ -59,9 +60,13 @@ def compute_metrics(db: Session) -> dict:
                          .where(AgentToolCall.success.is_(True))) or 0
 
     from app.services import sla_service
+    from app.services import outbox_service
     return {
         "sessions_by_task_status": by_status,
         "queue_depth": _queue_depth(),
+        # 发件箱积压：pending 长期不降或 stuck>0 说明 broker 投递持续失败，需要告警。
+        "outbox": outbox_service.backlog_stats(
+            db, stuck_attempts=get_settings().outbox_stuck_attempts),
         "sla": sla_service.sla_stats(db),
         "totals": {
             "sessions": n,

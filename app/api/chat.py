@@ -7,15 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import ResourceAccessDenied
+from app.core.logging import get_logger
 from app.core.ratelimit import allow_request
 from app.core.security import Principal, get_current_principal
 from app.db.models import AgentSession
 from app.db.session import get_db
 from app.schemas.chat import ChatActionIn, ChatMessageIn, ChatSession, SendMessageResponse
-from app.services import chat_service
+from app.services import chat_service, outbox_service
 from app.observability.tracing import get_trace_id
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+logger = get_logger(__name__)
 
 
 def _dispatch(session_id: int, trace_id: str) -> None:
@@ -47,6 +50,27 @@ def _dispatch(session_id: int, trace_id: str) -> None:
         process_agent_message.delay(session_id, trace_id=trace_id)
 
 
+def _dispatch_and_settle(db: Session, session_id: int, trace_id: str) -> None:
+    """内联投递快路 + 发件箱销账。
+
+    投递失败不再是丢消息：事件已与会话同事务落库，留在 pending 由 relay 补投，
+    因此这里吞掉异常、照常给用户返回 200，而不是把 broker 故障放大成请求失败。
+    """
+    settings = get_settings()
+    try:
+        _dispatch(session_id, trace_id)
+    except Exception as exc:  # noqa: BLE001 — broker 故障由发件箱兜底，不该连坐请求
+        if not settings.outbox_enabled:
+            raise
+        logger.warning(
+            "inline dispatch failed for session %s; left to outbox relay: %s",
+            session_id, exc)
+        return
+    if settings.outbox_enabled:
+        outbox_service.mark_sent(
+            db, outbox_service.dedup_key_for(outbox_service.AGENT_TOPIC, session_id))
+
+
 def _check_rate_limit(user_id: int) -> None:
     limit = get_settings().chat_rate_limit_per_min
     allowed, _ = allow_request(f"chat:{user_id}", limit, window_sec=60)
@@ -68,7 +92,7 @@ def post_message(
     _check_rate_limit(principal.user_id)
     sess, dedup = chat_service.accept_message(db, payload)
     if not dedup:
-        _dispatch(sess.id, get_trace_id())
+        _dispatch_and_settle(db, sess.id, get_trace_id())
     return SendMessageResponse(
         session_id=sess.id, ticket_id=sess.ticket_id,
         task_status=sess.task_status, dedup=dedup)
@@ -84,7 +108,7 @@ def post_action(
     _check_rate_limit(principal.user_id)
     sess, dedup = chat_service.accept_action(db, payload, principal.user_id)
     if not dedup:
-        _dispatch(sess.id, get_trace_id())
+        _dispatch_and_settle(db, sess.id, get_trace_id())
     return SendMessageResponse(
         session_id=sess.id,
         ticket_id=sess.ticket_id,

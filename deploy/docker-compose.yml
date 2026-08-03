@@ -62,6 +62,18 @@ services:
       redis:
         condition: service_healthy
 
+  # 发件箱补投程序：只依赖 PostgreSQL，负责把内联投递失败的事件重新投进队列。
+  # 不依赖 redis 健康检查——broker 宕机期间它同样要活着，恢复后才能把积压补出去。
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    command: python -m app.workers.outbox_relay
+    depends_on:
+      db:
+        condition: service_healthy
+
   frontend:
     build:
       context: ..

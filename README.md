@@ -15,18 +15,22 @@
 - **Agent harness**：统一跑 LLM 工具调用循环（ReAct），危险写操作不交给 LLM，由 finalize 确定性执行
 - **LLM 多 provider**：Claude / GPT / DeepSeek / Qwen / 本地 vLLM·Ollama，改 `.env` 即切，不动代码
 - **异步闭环**：API 落库+入队立即返回，worker 异步消费，SSE 推送处理进度（异常退回轮询）
+- **可靠投递**：消息/会话/待投递事件同事务落库（事务发件箱），独立 relay 补投；broker 宕机期间的消息恢复后照常处理，且不重复处理
 - **认证与 RBAC**：Bearer Token 从认证上下文确定用户身份；普通用户只能访问本人会话，管理接口仅 admin 可用
 - **可观测**：agent_tool_calls 审计、token/cost 记账、运行时 metrics
-- **评测 + guardrails 对抗**：47 个单轮/多轮评测回合，量化流程、转人工与合规拦截
+- **评测 + guardrails 对抗**：59 场景 / 77 个单轮·多轮回合，量化流程、转人工与合规拦截；真实模型（qwen-plus）77/77 通过，其中 46 个关键回合零失败
 
 ## 系统架构（文字版）
 ```
 用户 ──HTTP──▶ API 层(FastAPI)
-                │ POST /chat/message → 落库+建session+入队，立即返回(不阻塞)
+                │ POST /chat/message → 消息+session+待投递事件【同事务】落库，立即返回(不阻塞)
                 │ GET  /chat/session/{id} → 轮询 task_status + latest_reply + steps时间线
-                │ GET  /api/admin/metrics → 状态分布/队列深度/token/延迟
-                ▼ enqueue(Redis)
+                │ GET  /api/admin/metrics → 状态分布/队列深度/发件箱积压/token/延迟
+                ▼ enqueue(Redis) 内联快路，失败不丢消息
             异步任务层(Celery worker / 本地 thread)
+                ▲
+                │ 补投 pending 事件（只依赖 PostgreSQL，broker 宕机期间照常存活）
+            发件箱 relay(独立进程) ◀── outbox_events
                 ▼
             Agent 核心(harness 管道)
               意图(规则+LLM兜底) → SkillRouter → Skill.plan
@@ -35,7 +39,7 @@
                 ▼ 只经 tool/service
        工具层(16工具,统一ToolResult,自动审计) · 服务层(order/logistics/refund/ticket/sla/knowledge) · LLM抽象层(provider可插拔)
                 ▼
-            PostgreSQL(13张表) + 可观测落库
+            PostgreSQL(14张表) + 可观测落库
 ```
 
 ## 工单状态机

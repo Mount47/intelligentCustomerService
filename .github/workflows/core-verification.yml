@@ -84,6 +84,41 @@ jobs:
               tail -100 /tmp/supportflow-celery.log
               exit 1
             }
+      # 可靠投递验收：API 的 broker 指向不可达地址，模拟"提交成功但入队失败"。
+      # 消息必须不丢——relay 恢复后补投，且不产生重复处理。
+      - name: Outbox reliable-delivery proof (broker outage)
+        env:
+          DATABASE_URL: postgresql+psycopg://supportflow:supportflow@127.0.0.1:5432/supportflow_test
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_BROKER_URL: redis://127.0.0.1:6379/1
+          CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/2
+          AGENT_DISPATCH: celery
+          AUTH_SECRET: ci-integration-secret
+          CHAT_RATE_LIMIT_PER_MIN: "10000"
+          STUB_DELAY_MS: "20"
+          OUTBOX_RELAY_DELAY_SEC: "1"
+        run: |
+          celery -A app.workers.celery_app.celery_app worker \
+            --loglevel=INFO --concurrency=2 > /tmp/supportflow-celery-outbox.log 2>&1 &
+          CELERY_PID=$!
+          # API 单独起一份，broker 指向死端口：内联投递必然失败
+          CELERY_BROKER_URL=redis://127.0.0.1:1/0 \
+            uvicorn app.main:app --host 127.0.0.1 --port 8001 \
+            > /tmp/supportflow-api-outbox.log 2>&1 &
+          API_PID=$!
+          cleanup() {
+            kill "$API_PID" "$CELERY_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8001/health >/dev/null && break
+            sleep 1
+          done
+          python -m scripts.e2e_outbox_recovery --base-url http://127.0.0.1:8001 || {
+            tail -100 /tmp/supportflow-api-outbox.log
+            tail -100 /tmp/supportflow-celery-outbox.log
+            exit 1
+          }
       - name: PostgreSQL refund concurrency proof
         env:
           TEST_DATABASE_URL: postgresql+psycopg://supportflow:supportflow@127.0.0.1:5432/supportflow_test

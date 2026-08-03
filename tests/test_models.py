@@ -25,7 +25,8 @@ def db():
 
 
 def test_all_tables_created():
-    assert len(Base.metadata.tables) == 13
+    assert len(Base.metadata.tables) == 14
+    assert "outbox_events" in Base.metadata.tables
 
 
 def _user_order(db):

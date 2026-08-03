@@ -18,6 +18,9 @@ class AdminMetrics(CamelModel):
     active_sessions: int = 0
     # 削峰可视化超集（前端可后续采用，ADR-12）
     queue_depth: Optional[int] = None
+    # 事务发件箱积压：{pending, stuck, oldest_pending_age_sec}。
+    # pending 持续不降或 stuck>0 表示队列投递持续失败，需要人工介入。
+    outbox: dict = {}
     sessions_by_task_status: dict = {}
     total_tokens: int = 0
     avg_tokens_per_session: float = 0.0

@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     circuit_breaker_reset_sec: float = 30.0
     llm_fallback_model: str = ""    # 降级模型（同 provider 换更稳/更便宜；空=熔断时直接快速失败）
 
+    # 事务发件箱（可靠投递）：消息/会话与待投递事件同事务落库，relay 负责补投。
+    outbox_enabled: bool = True
+    # relay 取件前的静默期：留给 API 内联投递的快路，避免正常情况下重复投递。
+    outbox_relay_delay_sec: float = 5.0
+    outbox_relay_interval_sec: float = 2.0   # relay 轮询间隔
+    outbox_relay_batch: int = 50             # 单轮最多补投多少条
+    outbox_backoff_base_sec: float = 2.0     # 投递失败指数退避基数
+    outbox_backoff_max_sec: float = 300.0    # 退避上限
+    outbox_stuck_attempts: int = 3           # 连续失败达此次数计入告警口径
+
 
 @lru_cache
 def get_settings() -> Settings:

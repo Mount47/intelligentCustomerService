@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 ORM 模型 —— 13 张表。
+"""SQLAlchemy 2.0 ORM 模型 —— 14 张表。
 
 约定：状态字段用 String + 常量（PG/SQLite 双兼容，便于测试，不上原生 enum）；
 金额用 Numeric(10,2)；时间默认 func.now()。退款双唯一约束 + 消息幂等键见对应表。
@@ -331,3 +331,28 @@ class SlaRecord(_Created, Base):
     deadline: Mapped[datetime] = mapped_column(DateTime)              # 承诺截止时间
     is_timeout: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否已超时
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)  # 实际完成时间
+
+
+# ── 事务发件箱表（可靠投递）────────────────────────────────────────────────
+# 用处：消除"数据库已提交、消息队列投递失败"的窗口。用户消息、会话与待投递事件写在
+#         同一个事务里，要么一起成功、要么一起回滚；投递由独立 relay 补齐。
+# 关联：payload 里带 session_id，指向 agent_sessions；不建外键，发件箱是通用投递设施，
+#         topic 变化时不该被单一业务表绑死。
+# 为什么必须有这张表：没有它时 accept_message 提交成功后若 broker 不可达，
+#         会话会永远停在 queued，用户再也等不到回复——这是用户可见的丢消息。
+#         投递语义是 at-least-once：重复投递由 runner._claim_session 的 CAS 兜成幂等 no-op，
+#         因此发件箱只需保证"至少送达一次"，不需要昂贵的恰好一次。
+class OutboxEvent(_Created, Base):
+    __tablename__ = "outbox_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    topic: Mapped[str] = mapped_column(String(64))          # 目标 Celery 任务名
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)  # 任务参数（session_id/trace_id）
+    # 同一业务事件只允许一行，防止重试路径把同一会话重复写进发件箱。
+    dedup_key: Mapped[str] = mapped_column(String(96), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|sent
+    attempts: Mapped[int] = mapped_column(Integer, default=0)   # 已尝试投递次数
+    # relay 的可见时间：入库时留一小段延迟，避开 API 内联投递的快路；失败后按指数退避后移。
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String(512))  # 最近一次投递失败原因
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)   # 投递成功时间
