@@ -79,7 +79,9 @@ _KEYWORDS: list[tuple[Intents, tuple[str, ...]]] = [
     (Intents.RETURN_REQUEST, ("想退", "要退", "帮我退", "退掉", "退一下", "退一件",
                               "退这", "退那", "退我的", "退商品", "退东西", "退衣", "退鞋", "退订单")),
     (Intents.LOGISTICS_EXCEPTION, ("没收到", "未收到", "丢件", "物流异常", "不动了", "催")),
-    (Intents.LOGISTICS_QUERY, ("物流", "快递", "到哪", "发货", "运单", "单号")),
+    (Intents.LOGISTICS_QUERY, (
+        "物流", "快递", "到哪", "发货", "运单", "单号", "已经到了", "是不是到了", "到货", "签收",
+    )),
     (Intents.INVOICE_REQUEST, ("发票", "开票", "税号", "抬头")),
     (Intents.COUPON_ISSUE, ("优惠券", "券", "满减", "折扣码")),
     (Intents.ORDER_QUERY, ("订单", "我的单", "买的", "买了什么", "买了啥", "买过什么")),

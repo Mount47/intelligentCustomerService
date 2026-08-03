@@ -93,6 +93,11 @@ def test_indirect_delivered_but_missing_reaches_logistics_exception():
         assert clf.classify_intent(text).intent == Intents.LOGISTICS_EXCEPTION
 
 
+def test_delivered_status_question_reaches_logistics_query():
+    for text in ("帮我确认一下，这单是不是已经到了？", "这件东西到货了吗", "查询一下是否签收"):
+        assert clf.classify_intent(text).intent == Intents.LOGISTICS_QUERY
+
+
 def test_multiple_rule_candidates_require_disambiguation_without_llm():
     r = clf.classify_intent("物流一直没收到，我还想退款")
     assert r.intent == Intents.GENERAL_POLICY_QUERY
