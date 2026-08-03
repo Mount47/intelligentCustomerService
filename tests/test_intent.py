@@ -88,6 +88,11 @@ def test_negated_handoff_does_not_beat_real_intent():
     assert r.intent == Intents.LOGISTICS_QUERY
 
 
+def test_indirect_delivered_but_missing_reaches_logistics_exception():
+    for text in ("门口和驿站都没有", "前台也没，物业那里也没有", "附近都找遍了还是找不到"):
+        assert clf.classify_intent(text).intent == Intents.LOGISTICS_EXCEPTION
+
+
 def test_multiple_rule_candidates_require_disambiguation_without_llm():
     r = clf.classify_intent("物流一直没收到，我还想退款")
     assert r.intent == Intents.GENERAL_POLICY_QUERY

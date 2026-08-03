@@ -15,6 +15,7 @@ from enum import Enum
 
 from app.agent.state_machine import States
 from app.core.logging import get_logger
+from app.services import logistics_service
 
 logger = get_logger(__name__)
 
@@ -163,6 +164,10 @@ class RuleIntentClassifier:
         for intent, kws in _KEYWORDS:
             if any(kw in text for kw in kws) and intent not in candidates:
                 candidates.append(intent)
+        # “门口和驿站都没有”等话术不含“物流/快递/没收到”，仍是签收未收到的高风险表达。
+        if logistics_service.reports_not_received(text) \
+                and Intents.LOGISTICS_EXCEPTION not in candidates:
+            candidates.append(Intents.LOGISTICS_EXCEPTION)
         # 处理关键词表中有意设置的“广召回”重叠，而不是把它们误当真实多意图。
         # “我要退款”会同时包含广召回词“要退”；有精确退款且无“退货/寄回”时，以退款为准。
         if Intents.REFUND_REQUEST in candidates and Intents.RETURN_REQUEST in candidates \

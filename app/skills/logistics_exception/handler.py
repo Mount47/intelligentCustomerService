@@ -12,7 +12,6 @@ _SYSTEM = (
     "不得承诺具体送达时间（除非物流工具返回），不得编造物流信息。"
 )
 _READ_TOOLS = ["get_logistics_status", "check_logistics_exception"]
-_NOT_RECEIVED = ("没收到", "未收到", "没收", "未签收", "没到货")
 _STATUS_CN = {
     "pending": "待揽收",
     "in_transit": "运输中",
@@ -66,7 +65,7 @@ class LogisticsExceptionSkill:
 
         msg = ctx.message or ""
         # 显示签收但用户未收到 → 转人工
-        if exc.get("delivered") and any(k in msg for k in _NOT_RECEIVED):
+        if exc.get("delivered") and logistics_service.reports_not_received(msg):
             return Decision("物流显示已签收，但您反馈未收到，已为您升级人工核实。",
                             States.NEED_HUMAN, need_handoff=True,
                             handoff_reason="delivered_not_received")

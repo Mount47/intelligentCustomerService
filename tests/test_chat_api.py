@@ -4,10 +4,11 @@ API 测试用 TestClient + 依赖覆盖 sqlite + monkeypatch 入队（不连真�
 worker 处理用 stub agent 同步跑 run_agent_session。
 """
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.pool import StaticPool
 
 from app.agent.agent_core import build_default_agent
@@ -215,6 +216,108 @@ def test_structured_chat_action_cannot_operate_other_users_ticket(client):
         "clientActionId": "client-action-other-1",
     })
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_amount",
+    "bad_created_at",
+    "expired",
+    "order_amount_changed",
+    "ticket_binding_changed",
+    "order_owner_changed",
+])
+def test_structured_confirm_uses_same_fail_safe_validation(client, corruption):
+    """按钮确认与文本确认共用订单、归属、绑定、金额和时效校验。"""
+    with client.session_factory() as db:
+        order = Order(
+            user_id=1, order_no=f"P0-{corruption}", status="paid",
+            total_amount=100, product_type="normal",
+        )
+        db.add(order)
+        db.flush()
+        pending = {
+            "id": f"p0-action-{corruption}",
+            "type": "refund_request",
+            "order_id": order.id,
+            "amount": 100,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        ticket = Ticket(
+            user_id=1,
+            order_id=order.id,
+            category="chat",
+            status=States.WAITING_USER_CONFIRM,
+            pending_action=pending,
+        )
+        db.add(ticket)
+        db.flush()
+
+        if corruption == "missing_amount":
+            pending.pop("amount")
+        elif corruption == "bad_created_at":
+            pending["created_at"] = "not-a-time"
+        elif corruption == "expired":
+            pending["created_at"] = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+        elif corruption == "order_amount_changed":
+            order.total_amount = 101
+        elif corruption == "ticket_binding_changed":
+            other_order = Order(
+                user_id=1, order_no=f"P0-OTHER-{corruption}", status="paid",
+                total_amount=100, product_type="normal",
+            )
+            db.add(other_order)
+            db.flush()
+            ticket.order_id = other_order.id
+        elif corruption == "order_owner_changed":
+            other = User(username=f"other-{corruption}")
+            db.add(other)
+            db.flush()
+            order.user_id = other.id
+
+        ticket.pending_action = pending
+        flag_modified(ticket, "pending_action")
+        db.commit()
+        ticket_id = ticket.id
+
+    response = client.post("/api/chat/action", json={
+        "ticketId": ticket_id,
+        "actionId": f"p0-action-{corruption}",
+        "decision": "confirm",
+        "clientActionId": f"client-p0-{corruption}",
+    })
+
+    assert response.status_code == 409
+    assert "重新发起" in response.json()["error"]["message"]
+    with client.session_factory() as db:
+        ticket = db.get(Ticket, ticket_id)
+        assert ticket.pending_action is None
+        assert ticket.status == States.RESOLVED_BY_AGENT
+        assert db.query(RefundRequest).count() == 0
+
+
+def test_worker_does_not_retry_malformed_pending_action(db, user_order):
+    """损坏 pending_action 是业务拒绝，不是 Worker 异常。"""
+    u, o = user_order
+    first, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="我要退款", order_id=o.id))
+    run_agent_session(db, first.id, agent=build_default_agent())
+    ticket = db.get(Ticket, first.ticket_id)
+    pending = dict(ticket.pending_action)
+    pending["created_at"] = "broken"
+    ticket.pending_action = pending
+    db.commit()
+
+    confirm, _ = chat_service.accept_message(
+        db, ChatMessageIn(user_id=u.id, content="确认", ticket_id=ticket.id))
+    run_agent_session(db, confirm.id, agent=build_default_agent())
+    db.refresh(confirm)
+    db.refresh(ticket)
+
+    assert confirm.task_status == "completed"
+    assert confirm.retry_count == 0
+    assert confirm.error_message is None
+    assert ticket.pending_action is None
+    assert db.query(RefundRequest).count() == 0
 
 
 def test_run_agent_session_high_risk_need_human(db, user_order):

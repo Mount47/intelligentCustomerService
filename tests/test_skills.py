@@ -5,6 +5,9 @@
 """
 from datetime import datetime, timedelta
 
+import pytest
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.agent.agent_core import build_default_agent
 from app.agent.context import AgentContext
 from app.agent.state_machine import States
@@ -302,3 +305,62 @@ def test_logistics_delivered_not_received_to_human(db, user_order):
     assert ctx.intent == "logistics_exception"
     assert ctx.state == States.NEED_HUMAN
     assert decision.handoff_reason == "delivered_not_received"
+
+
+@pytest.mark.parametrize("message", [
+    "门口和驿站都没有",
+    "我看了快递柜，里面是空的",
+    "前台也没，物业那里也没有",
+    "附近都找遍了还是找不到",
+])
+def test_logistics_delivered_indirect_not_received_to_human(db, user_order, message):
+    """签收后的间接丢件表达也必须转人工，不能只匹配“没收到”。"""
+    u, _ = user_order
+    o = make_order(db, u.id, status="delivered", delivered_days_ago=1)
+    _add_logistics(db, o.id, "delivered", hours_ago=5)
+
+    decision, ctx = _run(db, u.id, message, order_id=o.id)
+
+    assert ctx.state == States.NEED_HUMAN
+    assert decision.handoff_reason == "delivered_not_received"
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_amount",
+    "bad_created_at",
+    "expired",
+    "order_amount_changed",
+    "ticket_binding_changed",
+    "order_owner_changed",
+])
+def test_text_confirm_fail_safe_for_invalid_pending_action(db, user_order, corruption):
+    """文本确认遇到损坏或变化的事实时必须清理、拒写，不得异常。"""
+    u, o = user_order
+    send, ticket = _convo(db, u.id, order_id=o.id)
+    send("我要退款")
+    pending = dict(ticket.pending_action)
+
+    if corruption == "missing_amount":
+        pending.pop("amount")
+    elif corruption == "bad_created_at":
+        pending["created_at"] = "not-a-time"
+    elif corruption == "expired":
+        pending["created_at"] = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+    elif corruption == "order_amount_changed":
+        o.total_amount = 101
+    elif corruption == "ticket_binding_changed":
+        other_order = make_order(db, u.id, amount=102)
+        ticket.order_id = other_order.id
+    elif corruption == "order_owner_changed":
+        o.user_id = u.id + 999
+
+    ticket.pending_action = pending
+    flag_modified(ticket, "pending_action")
+    db.flush()
+
+    decision, ctx = send("确认")
+
+    assert ctx.state == States.RESOLVED_BY_AGENT
+    assert "重新发起" in decision.reply
+    assert ticket.pending_action is None
+    assert db.query(RefundRequest).count() == 0

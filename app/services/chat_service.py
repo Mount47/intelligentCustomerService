@@ -30,7 +30,7 @@ from app.schemas.chat import (
     TokenUsage,
 )
 from app.schemas.common import to_frontend_task_status
-from app.services import ticket_service
+from app.services import pending_action_service, ticket_service
 
 # 工具名 → 中文标签（Agent 执行轨迹展示用）
 TOOL_LABELS = {
@@ -181,25 +181,23 @@ def accept_action(
     if ticket.user_id != user_id:
         raise ResourceAccessDenied("ticket does not belong to user")
     pending = dict(ticket.pending_action or {})
-    if ticket.status != States.WAITING_USER_CONFIRM or not pending:
-        raise InvalidPendingAction("当前没有等待确认的操作")
+    try:
+        pending_action_service.validate_refund_pending_action(db, ticket, user_id)
+    except InvalidPendingAction:
+        # 结构化入口没有 Worker 替我们收尾：立即清理并退出等待态，提交后再返回 409。
+        pending_action_service.clear_pending_action(ticket)
+        if ticket.status == States.WAITING_USER_CONFIRM:
+            ticket_service.update_status(
+                db,
+                ticket.id,
+                States.RESOLVED_BY_AGENT,
+                actor_type="system",
+                reason="invalid_pending_action",
+            )
+        db.commit()
+        raise
     if _pending_action_id(ticket, pending) != payload.action_id:
         raise InvalidPendingAction("确认内容已经变化，请刷新后重新确认")
-    if pending.get("submitted_action"):
-        raise InvalidPendingAction("该操作已经提交，请勿重复操作")
-    if pending.get("type") not in ("refund_request", "return_request"):
-        raise InvalidPendingAction("当前操作暂不支持页面确认")
-    try:
-        created_at = datetime.fromisoformat(str(pending["created_at"]))
-        if (datetime.utcnow() - created_at).total_seconds() > 3600:
-            raise InvalidPendingAction("确认已超时，请重新发起申请")
-    except (KeyError, TypeError, ValueError):
-        raise InvalidPendingAction("待确认操作数据不完整，请重新发起申请")
-    order = db.get(Order, int(pending["order_id"]))
-    if order is None or order.user_id != user_id or ticket.order_id != order.id:
-        raise InvalidPendingAction("订单信息已经变化，请重新发起申请")
-    if float(order.total_amount) != float(pending["amount"]):
-        raise InvalidPendingAction("订单金额已经变化，请重新发起申请")
 
     operation = "退货" if pending["type"] == "return_request" else "退款"
     content = (

@@ -17,14 +17,14 @@ from app.agent.context import AgentContext, Decision, SkillPlan
 from app.agent.intent_classifier import Intents
 from app.agent.state_machine import States
 from app.db.models import Ticket
-from app.services import refund_service, ticket_service
+from app.core.exceptions import InvalidPendingAction
+from app.services import pending_action_service, refund_service, ticket_service
 
 _SYSTEM = (
     "你是电商退款助手。可调用只读工具核对订单与政策，向用户解释处理依据；"
     "不得承诺一定退款/赔偿，不得绕过订单校验，不得编造结果。最终退款由系统按政策处理。"
 )
 _READ_TOOLS = ["get_order_detail", "check_refund_policy", "search_policy_docs", "get_order_refund"]
-_PENDING_TTL = 3600          # 待确认动作有效期（秒），过期需重新发起
 _NEW_REFUND_INTENTS = {Intents.REFUND_REQUEST, Intents.RETURN_REQUEST}
 
 
@@ -114,23 +114,17 @@ class RefundHandlingSkill:
 
     # ---- refund_confirmation：仅当绑定了 pending refund action 才真正建草稿 ----
     def _confirm(self, db, ctx: AgentContext, ticket) -> Decision:
-        pa = ticket.pending_action if ticket else None
-        if not pa or pa.get("type") not in {
-            Intents.REFUND_REQUEST.value, Intents.RETURN_REQUEST.value
-        }:
-            # 跨业务误确认防护：没有待确认的退款动作
-            return Decision("当前没有待确认的退款申请。如需退款请先告知订单号。", States.RESOLVED_BY_AGENT)
         try:
-            created = datetime.fromisoformat(pa["created_at"])
-            expired = (datetime.utcnow() - created).total_seconds() > _PENDING_TTL
-        except (KeyError, ValueError, TypeError):
-            expired = False
-        if expired:
-            ticket.pending_action = None
+            validated = pending_action_service.validate_refund_pending_action(
+                db, ticket, ctx.user_id, allow_submitted_confirm=True
+            )
+        except InvalidPendingAction as exc:
+            pending_action_service.clear_pending_action(ticket)
             db.flush()
-            return Decision("确认已超时，请重新发起退款申请。", States.RESOLVED_BY_AGENT)
-        order_id = pa["order_id"]
-        operation = "退货" if pa["type"] == Intents.RETURN_REQUEST.value else "退款"
+            return Decision(str(exc), States.RESOLVED_BY_AGENT)
+
+        order_id = validated.order.id
+        operation = "退货" if validated.action_type == Intents.RETURN_REQUEST.value else "退款"
         existing = refund_service.get_active_refund(db, ctx.user_id, order_id)
         if existing is not None:                     # 幂等：已建则不重复
             ticket.pending_action = None
