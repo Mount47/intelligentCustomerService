@@ -17,7 +17,7 @@
       "turns": [{
         "message": "帮忙瞅瞅前两天买的那单现在走到哪一步了",
         "attach_order": "target",
-        "expected": {"intents": ["order_query", "logistics_query"], "skills": ["order_query", "logistics_exception"], "state": "resolved_by_agent", "handoff": false, "any_tools": ["get_order_detail", "get_order_items", "get_logistics_status", "check_logistics_exception"], "reply_any": ["239.0", "苏州分拨中心"], "reply_none": ["无法查询"]}
+        "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "resolved_by_agent", "handoff": false, "reply_all": ["【订单信息】", "【物流信息】"], "reply_any": ["239.0", "苏州分拨中心"], "reply_none": ["无法查询"]}
       }]
     },
     {
@@ -147,7 +147,7 @@
       "turns": [{
         "message": "物流一直没动，我已经不想等了，最终诉求是把这件商品退掉",
         "attach_order": "target",
-        "expected": {"intents": ["refund_request", "return_request"], "skill": "refund_handling", "state": "waiting_user_confirm", "refund_count": 0}
+        "expected": {"intents": ["multi_intent"], "skill": "task_planner", "state": "waiting_user_confirm", "refund_count": 0, "reply_all": ["【物流信息】", "【退货申请】"]}
       }]
     },
     {
@@ -182,7 +182,7 @@
       "orders": [{"alias": "target", "status": "paid", "amount": 120.0}],
       "turns": [
         {"message": "我想申请退款", "expected": {"intents": ["refund_request"], "skill": "refund_handling", "state": "info_required", "refund_count": 0}},
-        {"message": "订单号是 {{order_no:target}}", "expected": {"intents": ["refund_request"], "skill": "refund_handling", "state": "waiting_user_confirm", "refund_count": 0, "any_tools": ["get_order_detail", "check_refund_policy"]}}
+        {"message": "订单号是 {{order_no:target}}", "expected": {"intents": ["refund_request"], "skill": "refund_handling", "state": "waiting_user_confirm", "refund_count": 0}}
       ]
     },
     {

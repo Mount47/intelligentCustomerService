@@ -86,6 +86,7 @@ def test_out_of_scope_detected():
 def test_negated_handoff_does_not_beat_real_intent():
     r = clf.classify_intent("别转人工，我只想查物流")
     assert r.intent == Intents.LOGISTICS_QUERY
+    assert clf.classify_intent("商品坏了，不准转人工").intent == Intents.PRODUCT_COMPLAINT
 
 
 def test_indirect_delivered_but_missing_reaches_logistics_exception():

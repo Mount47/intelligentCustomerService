@@ -120,7 +120,7 @@ _OUT_OF_SCOPE_CUES = ("天气", "几点", "星期几", "笑话", "写诗", "唱�
 # 非退款意图也可能被明确否定。命中这些短语时，移除对应候选，避免
 # “别转人工，我只想查物流”被关键词优先级误路由到人工。
 _NEGATED_INTENT_CUES: dict[Intents, tuple[str, ...]] = {
-    Intents.HUMAN_HANDOFF: ("别转人工", "不转人工", "不要人工", "不用人工"),
+    Intents.HUMAN_HANDOFF: ("别转人工", "不转人工", "不要人工", "不用人工", "不准转人工"),
     Intents.PRODUCT_COMPLAINT: ("不是投诉", "不投诉", "别投诉"),
     Intents.INVOICE_REQUEST: ("不开发票", "不用发票", "不要发票"),
 }
